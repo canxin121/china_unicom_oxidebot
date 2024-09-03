@@ -17,7 +17,7 @@ pub enum ConfigCommand {
 
     /// Set configuration, use 'None' to set null
     Set {
-        /// String?: Cookie for login
+        /// String?: Cookie for login, should contain 'ecs_token' and 'ecs_acc'
         #[arg(short, long)]
         cookie: Option<String>,
 
