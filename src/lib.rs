@@ -75,13 +75,11 @@ impl ChinaUnicomHandler {
 
     async fn get_user_config(&self, matcher: &Matcher) -> Result<Option<ConfigModel>> {
         if let Some((user, _bot)) = get_user_bot_from(matcher).await {
-            return Ok(ConfigEntity::find_by_id(user).one(&self.db).await?);
-        } else {
-            self.send_message(
-                matcher,
-                "You have not registered yet, please use the `register` command to register first.",
-            )
-            .await?;
+            let config = ConfigEntity::find_by_id(user).one(&self.db).await?;
+            if config.is_none() {
+                let _ =  self.send_message(matcher, "You have not registered yet, please use the `register` command to register first.").await;
+            }
+            return Ok(config);
         }
         Ok(None)
     }
