@@ -32,13 +32,13 @@ pub async fn query_once(
     let today = TodayEntity::find_by_id(config.user.as_str())
         .one(db)
         .await?;
-    let mut should_update = false;
+    let mut should_send = false;
     let mut message = format!("{}:\n", new_data.package_name);
 
     match yesterday {
         Some(yesterday_model) => match today {
             Some(today_model) => {
-                should_update = handle_update(&new_data, &today_model, config, db).await?;
+                should_send = handle_update(&new_data, &today_model, config, db).await?;
 
                 message += &new_data.format_with_last(&FORMAT_DURATION, &today_model.into())?;
                 message += "\n";
@@ -56,11 +56,12 @@ pub async fn query_once(
                 TodayEntity::update(new_today_active).exec(db).await?;
                 message += &new_data.format(&FORMAT_DURATION)?;
                 message += "\n";
+                should_send = true;
             }
         },
         None => match today {
             Some(today_model) => {
-                should_update = handle_update(&new_data, &today_model, config, db).await?;
+                should_send = handle_update(&new_data, &today_model, config, db).await?;
                 message += &new_data.format_with_last(&FORMAT_DURATION, &today_model.into())?;
                 message += "\n";
             }
@@ -68,6 +69,7 @@ pub async fn query_once(
                 let new_today_active: TodayActiveModel =
                     build_today_data(new_data.clone(), config.user.clone(), config.bot.clone());
                 TodayEntity::insert(new_today_active).exec(db).await?;
+                should_send = true;
             }
         },
     }
@@ -76,7 +78,7 @@ pub async fn query_once(
     message += "\n";
     message += &new_data.format(&FORMAT_LEFT)?;
     message += "\n";
-    Ok((should_update, message))
+    Ok((should_send, message))
 }
 
 async fn handle_update(
