@@ -303,36 +303,79 @@ impl ChinaUnicomHandler {
     }
 
     async fn handle_add_task(&self, matcher: &Matcher, user: &str) -> Result<()> {
-        match self.add_task(user).await {
-            Ok(_) => {
-                self.send_message(matcher, "ChinaUnicom: Task start success.")
-                    .await?;
+        if let Some(config) = self.get_user_config(matcher).await? {
+            if !config.enable_task {
+                let mut config_active: ConfigActiveModel = config.into();
+                config_active.enable_task = Set(true);
+                match ConfigEntity::update(config_active).exec(&self.db).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        self.send_message(
+                            matcher,
+                            &format!("ChinaUnicom: Task start failed to update config: {:?}", e),
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                }
             }
-            Err(e) => {
-                self.send_message(matcher, &format!("ChinaUnicom: Task start failed: {:?}", e))
-                    .await?;
+            match self.add_task(user).await {
+                Ok(_) => {
+                    self.send_message(matcher, "ChinaUnicom: Task start success.")
+                        .await?;
+                }
+                Err(e) => {
+                    self.send_message(matcher, &format!("ChinaUnicom: Task start failed: {:?}", e))
+                        .await?;
+                }
             }
         }
         Ok(())
     }
 
     async fn handle_task_stop(&self, matcher: &Matcher, user: &str) -> Result<()> {
-        if let Some((_user, task)) = self.tasks.remove(user) {
-            task.abort();
-            self.send_message(matcher, "ChinaUnicom: Task stop success.")
-                .await?;
-        } else {
-            self.send_message(matcher, "ChinaUnicom: Task is not running.")
-                .await?;
+        if let Some(config) = self.get_user_config(matcher).await? {
+            if config.enable_task {
+                let mut config_active: ConfigActiveModel = config.into();
+                config_active.enable_task = Set(false);
+                match ConfigEntity::update(config_active).exec(&self.db).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        self.send_message(
+                            matcher,
+                            &format!("ChinaUnicom: Task stop failed to update config: {:?}", e),
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                }
+            }
+            if let Some((_user, task)) = self.tasks.remove(user) {
+                task.abort();
+                self.send_message(matcher, "ChinaUnicom: Task stop success.")
+                    .await?;
+            } else {
+                self.send_message(matcher, "ChinaUnicom: Task is not running.")
+                    .await?;
+            }
         }
         Ok(())
     }
+
     async fn handle_restart_task(&self, matcher: &Matcher, user: &str) -> Result<()> {
         if let Some((_user, task)) = self.tasks.remove(user) {
             task.abort();
-            self.add_task(user).await?;
-            self.send_message(matcher, "ChinaUnicom: Task restart success.")
-                .await?;
+            if let Some(config) = self.get_user_config(matcher).await? {
+                if config.enable_task {
+                    self.handle_add_task(matcher, user).await?;
+                } else {
+                    self.send_message(
+                        matcher,
+                        "ChinaUnicom: Task is stop, so it will not restart.",
+                    )
+                    .await?;
+                }
+            }
         } else {
             self.send_message(
                 matcher,
