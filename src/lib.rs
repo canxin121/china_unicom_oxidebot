@@ -126,8 +126,18 @@ impl ChinaUnicomHandler {
 
     async fn handle_query(&self, matcher: &Matcher) -> Result<()> {
         if let Some(config) = self.get_user_config(matcher).await? {
-            let (_should_send, message) = query_once(&self.db, &config).await?;
-            self.send_message(matcher, &message).await?;
+            match query_once(&self.db, &config).await {
+                Ok((_should_send, message)) => {
+                    self.send_message(matcher, &message).await?;
+                }
+                Err(e) => {
+                    self.send_message(
+                        matcher,
+                        &format!("An error occurred while querying: {:?}", e),
+                    )
+                    .await?;
+                }
+            }
         }
         Ok(())
     }
