@@ -368,13 +368,14 @@ impl EventHandlerTrait for ChinaUnicomHandler {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            // if !matcher.is_related_to_bot().await {
-            //     return Ok(());
-            // }
-
             if let Some(message) = matcher.try_get_message() {
                 let raw_text = message.get_raw_text();
                 if !raw_text.starts_with(Cli::name()) {
+                    return Ok(());
+                }
+                if let Some(_) = matcher.try_get_group() {
+                    self.send_message(&matcher, "This command can only be used in private chat.")
+                        .await?;
                     return Ok(());
                 }
                 let (user, bot) = get_user_bot_from(&matcher)

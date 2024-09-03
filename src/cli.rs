@@ -78,9 +78,9 @@ pub enum Commands {
 #[derive(Parser)]
 #[command(
     name = "/china_unicom",
-    version = "1.0",
+    version = "0.1.0",
     author = "canxin121",
-    about = "Query China Unicom data usage"
+    about = "A chatbot cli to actively check or receive scheduled/threshold notifications about China Unicom flow usage."
 )]
 pub struct Cli {
     #[command(subcommand)]
