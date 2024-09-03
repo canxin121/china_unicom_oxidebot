@@ -1,0 +1,17 @@
+[package]
+name = "china_unicom_oxidebot"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.86"
+oxidebot = "0.1.2"
+serde_json = "1.0.127"
+tokio = { version = "1.40.0", features = ["full"] }
+china_unicom_rs = { git = "https://github.com/canxin121/china_unicom_rs" }
+clap = { version = "4.5.16", features = ["derive"] }
+sea-orm = { version = "1.0.1", features = ["runtime-tokio-native-tls", "sqlx-sqlite"] }
+chrono = "0.4.38"
+sea-orm-migration = { version = "1.0.1", features = ["runtime-tokio-native-tls", "sqlx-sqlite"] }
+tracing = "0.1.40"
+dashmap = "6.0.1"
