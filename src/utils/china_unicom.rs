@@ -89,6 +89,7 @@ async fn handle_update(
 ) -> anyhow::Result<bool> {
     let new_data_date = new_data.time.date_naive();
     let today_data_date = today_model.time.date_naive();
+    
     if new_data_date != today_data_date {
         if today_data_date.succ_opt() == Some(new_data_date) {
             let update_data: YesterdayModel = today_model.clone().into();
@@ -100,17 +101,26 @@ async fn handle_update(
                 .await?;
         }
     }
-    let should_update_today = {
-        if new_data_date != today_data_date {
-            true
-        } else {
-            if let Some(timeout) = config.timeout {
-                new_data.time - today_model.time > TimeDelta::seconds(timeout)
-            } else {
-                false
-            }
-        }
-    };
+
+    let mut should_update_today = false;
+
+    if new_data_date != today_data_date {
+        should_update_today = true
+    } else if config.timeout.is_some()
+        && new_data.time - today_model.time > TimeDelta::seconds(config.timeout.unwrap())
+    {
+        should_update_today = true
+    } else if config.free_threshold.is_some()
+        && new_data.free_flow_used - today_model.free_flow_used > config.free_threshold.unwrap()
+    {
+        should_update_today = true
+    } else if config.nonfree_threshold.is_some()
+        && new_data.non_free_flow_used - today_model.non_free_flow_used
+            > config.nonfree_threshold.unwrap()
+    {
+        should_update_today = true
+    }
+
     if should_update_today {
         let new_today_active: TodayActiveModel =
             build_today_data(new_data.clone(), config.user.clone(), config.bot.clone());
