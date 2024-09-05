@@ -89,7 +89,7 @@ async fn handle_update(
 ) -> anyhow::Result<bool> {
     let new_data_date = new_data.time.date_naive();
     let today_data_date = today_model.time.date_naive();
-    
+
     if new_data_date != today_data_date {
         if today_data_date.succ_opt() == Some(new_data_date) {
             let update_data: YesterdayModel = today_model.clone().into();
