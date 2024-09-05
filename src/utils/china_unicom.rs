@@ -1,5 +1,5 @@
 use china_unicom_rs::{data::ChinaUnicomData, query::query_china_unicom_data};
-use chrono::TimeDelta;
+use chrono::{NaiveDate, TimeDelta};
 use sea_orm::EntityTrait;
 use tokio::{task::JoinHandle, time::sleep};
 
@@ -112,19 +112,46 @@ async fn handle_update(
         }
     }
 
-    // handle today data
-    let should_update_today = {
-        // not the same date, update today data
+    fn should_update_today(
+        config: &ConfigModel,
+        new_data: &ChinaUnicomData,
+        today_model: &TodayModel,
+        new_data_date: NaiveDate,
+        today_data_date: NaiveDate,
+    ) -> bool {
         if new_data_date != today_data_date {
-            true
-        } else {
-            if let Some(timeout) = config.timeout {
-                new_data.time - today_model.time > TimeDelta::seconds(timeout)
-            } else {
-                false
+            return true;
+        }
+
+        if let Some(timeout) = config.timeout {
+            if new_data.time - today_model.time > TimeDelta::seconds(timeout) {
+                return true;
             }
         }
-    };
+
+        if let Some(free_threshold) = config.free_threshold {
+            if new_data.free_flow_used - today_model.free_flow_used > free_threshold {
+                return true;
+            }
+        }
+
+        if let Some(nonfree_threshold) = config.nonfree_threshold {
+            if new_data.non_free_flow_used - today_model.non_free_flow_used > nonfree_threshold {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    let should_update_today = should_update_today(
+        config,
+        new_data,
+        today_model,
+        new_data_date,
+        today_data_date,
+    );
+
     if should_update_today {
         let new_today_active: TodayActiveModel =
             build_today_data(new_data.clone(), config.user.clone(), config.bot.clone());
