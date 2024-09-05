@@ -38,7 +38,7 @@ pub async fn query_once(
     match yesterday {
         Some(yesterday_model) => match today {
             Some(today_model) => {
-                should_send = handle_update(&new_data, &today_model, config, db).await?;
+                should_send = handle_update(&new_data, &today_model, true, config, db).await?;
 
                 message += &new_data.format_with_last(&FORMAT_DURATION, &today_model.into())?;
                 message += "\n";
@@ -61,7 +61,7 @@ pub async fn query_once(
         },
         None => match today {
             Some(today_model) => {
-                should_send = handle_update(&new_data, &today_model, config, db).await?;
+                should_send = handle_update(&new_data, &today_model, false, config, db).await?;
                 message += &new_data.format_with_last(&FORMAT_DURATION, &today_model.into())?;
                 message += "\n";
             }
@@ -84,43 +84,47 @@ pub async fn query_once(
 async fn handle_update(
     new_data: &ChinaUnicomData,
     today_model: &TodayModel,
+    has_yesterday_model: bool,
     config: &ConfigModel,
     db: &sea_orm::DatabaseConnection,
 ) -> anyhow::Result<bool> {
     let new_data_date = new_data.time.date_naive();
     let today_data_date = today_model.time.date_naive();
 
-    if new_data_date != today_data_date {
+    // handle yesterday data
+    // has no yesterday model, insert it with today model
+    if !has_yesterday_model {
+        let data_: YesterdayModel = today_model.clone().into();
+        let active_data_: YesterdayActiveModel = data_.into();
+        YesterdayEntity::insert(active_data_).exec(db).await?;
+    // already has yesterday model, but the date is not the same
+    } else if new_data_date != today_data_date {
+        // if the new data is the next day of today data, update the yesterday model
         if today_data_date.succ_opt() == Some(new_data_date) {
-            let update_data: YesterdayModel = today_model.clone().into();
-            let update_active_data: YesterdayActiveModel = update_data.into();
-            YesterdayEntity::update(update_active_data).exec(db).await?;
-        } else {
+            let data_: YesterdayModel = today_model.clone().into();
+            let active_data_: YesterdayActiveModel = data_.into();
+            YesterdayEntity::update(active_data_).exec(db).await?;
+        // otherwise, delete the yesterday model
+        } else if has_yesterday_model {
             YesterdayEntity::delete_by_id(config.user.as_str())
                 .exec(db)
                 .await?;
         }
     }
 
-    let mut should_update_today = false;
-
-    if new_data_date != today_data_date {
-        should_update_today = true
-    } else if config.timeout.is_some()
-        && new_data.time - today_model.time > TimeDelta::seconds(config.timeout.unwrap())
-    {
-        should_update_today = true
-    } else if config.free_threshold.is_some()
-        && new_data.free_flow_used - today_model.free_flow_used > config.free_threshold.unwrap()
-    {
-        should_update_today = true
-    } else if config.nonfree_threshold.is_some()
-        && new_data.non_free_flow_used - today_model.non_free_flow_used
-            > config.nonfree_threshold.unwrap()
-    {
-        should_update_today = true
-    }
-
+    // handle today data
+    let should_update_today = {
+        // not the same date, update today data
+        if new_data_date != today_data_date {
+            true
+        } else {
+            if let Some(timeout) = config.timeout {
+                new_data.time - today_model.time > TimeDelta::seconds(timeout)
+            } else {
+                false
+            }
+        }
+    };
     if should_update_today {
         let new_today_active: TodayActiveModel =
             build_today_data(new_data.clone(), config.user.clone(), config.bot.clone());
@@ -136,13 +140,11 @@ pub async fn create_china_unicom_task<DB: Into<sea_orm::DatabaseConnection>>(
 ) -> anyhow::Result<JoinHandle<()>> {
     let db = db.into();
 
-    // 启动一个task，首先发送一个查询请求
     let config = ConfigEntity::find_by_id(&user)
         .one(&db)
         .await?
         .ok_or(anyhow::anyhow!("User {} not found in config", user))?;
 
-    // 立刻查询一次
     let (shoudl_send, message) = query_once(&db, &config).await?;
 
     if shoudl_send {
