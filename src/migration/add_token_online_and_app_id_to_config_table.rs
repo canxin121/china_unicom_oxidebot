@@ -19,13 +19,20 @@ impl MigrationTrait for Migration {
                 Table::alter()
                     .table(ConfigTable::Table)
                     .add_column(
-                        ColumnDef::new(Column::TokenOnline)
+                        ColumnDef::new(Column::AppId)
                             .string()
                             .not_null()
                             .default(""),
                     )
+                    .to_owned(),
+            )
+            .await;
+        let _ = manager
+            .alter_table(
+                Table::alter()
+                    .table(ConfigTable::Table)
                     .add_column(
-                        ColumnDef::new(Column::AppId)
+                        ColumnDef::new(Column::TokenOnline)
                             .string()
                             .not_null()
                             .default(""),
@@ -55,6 +62,13 @@ impl MigrationTrait for Migration {
                 Table::alter()
                     .table(ConfigTable::Table)
                     .drop_column(Column::TokenOnline)
+                    .to_owned(),
+            )
+            .await;
+        let _ = manager
+            .alter_table(
+                Table::alter()
+                    .table(ConfigTable::Table)
                     .drop_column(Column::AppId)
                     .to_owned(),
             )
