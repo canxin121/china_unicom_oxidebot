@@ -26,6 +26,8 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Column::Timeout).integer().null())
                     .col(ColumnDef::new(Column::FreeThreshold).float().null())
                     .col(ColumnDef::new(Column::NonfreeThreshold).float().null())
+                    // .col(ColumnDef::new(Column::TokenOnline).string().not_null())
+                    // .col(ColumnDef::new(Column::AppId).string().not_null())
                     .to_owned(),
             )
             .await

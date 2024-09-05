@@ -9,6 +9,8 @@ pub struct Model {
     pub user: String,
     pub bot: String,
     pub cookie: String,
+    pub token_online: String,
+    pub app_id: String,
     // 是否启用定时任务
     pub enable_task: bool,
     // 查询间隔(s, min = 60)
@@ -44,18 +46,6 @@ impl Display for Model {
     }
 }
 
-impl Model {
-    pub async fn new(cookie: String, user: &str, bot: &str) -> Option<Self> {
-        let model = Model {
-            user: user.to_string(),
-            bot: bot.to_string(),
-            cookie,
-            ..Default::default()
-        };
-        Some(model)
-    }
-}
-
 impl Default for Model {
     fn default() -> Self {
         Self {
@@ -67,6 +57,8 @@ impl Default for Model {
             bot: String::with_capacity(0),
             free_threshold: None,
             nonfree_threshold: Some(0.05),
+            token_online: String::with_capacity(0),
+            app_id: String::with_capacity(0),
         }
     }
 }

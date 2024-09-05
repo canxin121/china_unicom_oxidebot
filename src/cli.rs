@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{builder::Str, Parser, Subcommand};
 
 #[derive(Subcommand)]
 pub enum TaskCommand {
@@ -47,6 +47,10 @@ pub enum Commands {
         /// String: Cookie for login
         #[arg(short, long)]
         cookie: String,
+        #[arg(short, long)]
+        app_id: String,
+        #[arg(short, long)]
+        token_online: String,
     },
 
     /// Deregister from China Unicom Oxidebot service

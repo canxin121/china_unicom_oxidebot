@@ -12,8 +12,6 @@ pub async fn init_db() -> anyhow::Result<sea_orm::DatabaseConnection> {
     }
     let connect_options = sea_orm::ConnectOptions::new("sqlite://./china_unicom/data.db");
     let db = sea_orm::Database::connect(connect_options).await?;
-    if !exist {
-        Migrator::up(&db, None).await?;
-    }
+    Migrator::up(&db, None).await?;
     Ok(db)
 }

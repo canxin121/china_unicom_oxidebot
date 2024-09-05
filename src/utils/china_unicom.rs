@@ -1,11 +1,12 @@
-use china_unicom_rs::{data::ChinaUnicomData, query::query_china_unicom_data};
+use anyhow::Result;
+use china_unicom_rs::{data::ChinaUnicomData, online::online, query::query_china_unicom_data};
 use chrono::{NaiveDate, TimeDelta};
-use sea_orm::EntityTrait;
+use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use tokio::{task::JoinHandle, time::sleep};
 
 use crate::model::{
-    today::build_today_data, ConfigEntity, ConfigModel, TodayActiveModel, TodayEntity, TodayModel,
-    YesterdayActiveModel, YesterdayEntity, YesterdayModel,
+    today::build_today_data, ConfigActiveModel, ConfigEntity, ConfigModel, TodayActiveModel,
+    TodayEntity, TodayModel, YesterdayActiveModel, YesterdayEntity, YesterdayModel,
 };
 
 use super::oxidebot_util::send_message;
@@ -25,20 +26,34 @@ pub async fn query_once(
     db: &sea_orm::DatabaseConnection,
     config: &ConfigModel,
 ) -> anyhow::Result<(bool, String)> {
-    let new_data = query_china_unicom_data(&config.cookie).await?;
+    let new_data = match query_china_unicom_data(&config.cookie).await {
+        Ok(data) => data,
+        Err(e) => {
+            if e.to_string().contains("999998") {
+                let new_config = handle_auth_update(config, db).await?;
+                let data = query_china_unicom_data(&new_config.cookie).await?;
+                data
+            } else {
+                return Err(anyhow::anyhow!(""));
+            }
+        }
+    };
+
     let yesterday = YesterdayEntity::find_by_id(config.user.as_str())
         .one(db)
         .await?;
     let today = TodayEntity::find_by_id(config.user.as_str())
         .one(db)
         .await?;
+    // why should_send is unused?
+    #[allow(unused_assignments)]
     let mut should_send = false;
     let mut message = format!("{}:\n", new_data.package_name);
 
     match yesterday {
         Some(yesterday_model) => match today {
             Some(today_model) => {
-                should_send = handle_update(&new_data, &today_model, true, config, db).await?;
+                should_send = handle_data_update(&new_data, &today_model, true, config, db).await?;
 
                 message += &new_data.format_with_last(&FORMAT_DURATION, &today_model.into())?;
                 message += "\n";
@@ -61,7 +76,8 @@ pub async fn query_once(
         },
         None => match today {
             Some(today_model) => {
-                should_send = handle_update(&new_data, &today_model, false, config, db).await?;
+                should_send =
+                    handle_data_update(&new_data, &today_model, false, config, db).await?;
                 message += &new_data.format_with_last(&FORMAT_DURATION, &today_model.into())?;
                 message += "\n";
             }
@@ -81,7 +97,7 @@ pub async fn query_once(
     Ok((should_send, message))
 }
 
-async fn handle_update(
+async fn handle_data_update(
     new_data: &ChinaUnicomData,
     today_model: &TodayModel,
     has_yesterday_model: bool,
@@ -159,6 +175,18 @@ async fn handle_update(
         TodayEntity::update(new_today_active).exec(db).await?;
     }
     Ok(should_update_today)
+}
+
+async fn handle_auth_update(
+    config: &ConfigModel,
+    db: &sea_orm::DatabaseConnection,
+) -> Result<ConfigModel> {
+    let resp = online(&config.token_online, &config.app_id).await?;
+    let mut config_active: ConfigActiveModel = config.clone().into();
+    config_active.token_online = Set(resp.online_token);
+    config_active.cookie = Set(resp.cookie);
+    let new_config = config_active.update(db).await?;
+    Ok(new_config)
 }
 
 pub async fn create_china_unicom_task<DB: Into<sea_orm::DatabaseConnection>>(

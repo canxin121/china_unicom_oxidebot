@@ -273,7 +273,7 @@ dependencies = [
 [[package]]
 name = "china_unicom_rs"
 version = "0.1.0"
-source = "git+https://github.com/canxin121/china_unicom_rs#dbd03ebfc4457f5132e817305bf73749263bf344"
+source = "git+https://github.com/canxin121/china_unicom_rs#080031e120ba07faf83cfc93c07e4c37b4a29760"
 dependencies = [
  "aho-corasick",
  "anyhow",

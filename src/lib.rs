@@ -88,12 +88,20 @@ impl ChinaUnicomHandler {
         &self,
         matcher: &Matcher,
         cookie: String,
+        app_id: String,
+        token_online: String,
         user: &str,
         bot: &str,
     ) -> Result<()> {
-        let config = ConfigModel::new(cookie, user, bot)
-            .await
-            .ok_or(anyhow::anyhow!("Failed to build ConfigModel"))?;
+        let config = ConfigModel {
+            user: user.to_string(),
+            bot: bot.to_string(),
+            app_id,
+            token_online,
+            cookie,
+            ..Default::default()
+        };
+
         let config_active: ConfigActiveModel = config.into();
         match ConfigEntity::insert(config_active).exec(&self.db).await {
             Ok(_) => {
@@ -425,8 +433,20 @@ impl EventHandlerTrait for ChinaUnicomHandler {
 
                 match Cli::try_parse_from(raw_text.split_whitespace()) {
                     Ok(cli) => match cli.command {
-                        cli::Commands::Register { cookie } => {
-                            self.handle_register(&matcher, cookie, &user, &bot).await?;
+                        cli::Commands::Register {
+                            cookie,
+                            app_id,
+                            token_online,
+                        } => {
+                            self.handle_register(
+                                &matcher,
+                                cookie,
+                                app_id,
+                                token_online,
+                                &user,
+                                &bot,
+                            )
+                            .await?;
                         }
                         cli::Commands::Query => {
                             self.handle_query(&matcher).await?;
