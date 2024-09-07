@@ -29,10 +29,11 @@ pub async fn query_once(
         Err(e) => {
             if e.to_string().contains("999998") {
                 let new_config = handle_auth_update(config, db).await?;
+                tracing::info!("Update auth info for user: {}", new_config.user);
                 let data = query_china_unicom_data(&new_config.cookie).await?;
                 data
             } else {
-                return Err(anyhow::anyhow!(""));
+                return Err(e);
             }
         }
     };
@@ -132,6 +133,7 @@ async fn handle_data_update(
             DailyEntity::delete_by_id(config.user.as_str())
                 .exec(db)
                 .await?;
+            tracing::info!("Delete old daily data for user: {}", config.user);
         }
         // insert the new daily data
         match last_model {
@@ -141,6 +143,7 @@ async fn handle_data_update(
 
                 let new_daily_active: DailyActiveModel = new_daily_model.into();
                 DailyEntity::insert(new_daily_active).exec(db).await?;
+                tracing::info!("Insert new daily data using last data for user: {}", config.user);
             }
             None => {
                 // if the last model is not exist, we need to create a new daily model
@@ -148,6 +151,7 @@ async fn handle_data_update(
                 let daily_data_active =
                     build_daily_active(new_data.clone(), config.user.clone(), config.bot.clone());
                 DailyEntity::insert(daily_data_active).exec(db).await?;
+                tracing::info!("Insert new daily data using new data for user: {}", config.user);
             }
         }
     }
@@ -160,11 +164,13 @@ async fn handle_data_update(
             LastEntity::delete_by_id(config.user.as_str())
                 .exec(db)
                 .await?;
+            tracing::info!("Delete old last data for user: {}", config.user);
         }
 
         let new_last_active: LastActiveModel =
             build_last_active(new_data.clone(), config.user.clone(), config.bot.clone());
         LastEntity::insert(new_last_active).exec(db).await?;
+        tracing::info!("Insert new last data for user: {}", config.user);
     }
     Ok(should_update_today)
 }
