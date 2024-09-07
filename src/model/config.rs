@@ -65,19 +65,19 @@ impl Default for Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(has_one = "super::today::Entity")]
+    #[sea_orm(has_one = "super::last::Entity")]
     Today,
-    #[sea_orm(has_one = "super::yesterday::Entity")]
+    #[sea_orm(has_one = "super::daily::Entity")]
     Yesterday,
 }
 
-impl Related<super::today::Entity> for Entity {
+impl Related<super::last::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Today.def()
     }
 }
 
-impl Related<super::yesterday::Entity> for Entity {
+impl Related<super::daily::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Yesterday.def()
     }

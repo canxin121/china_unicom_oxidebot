@@ -1,4 +1,4 @@
-use crate::model::today::Column;
+use crate::model::last::Column;
 use sea_orm_migration::{prelude::*, schema::*};
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -48,6 +48,6 @@ impl MigrationTrait for Migration {
 
 #[derive(DeriveIden)]
 pub enum TodayTable {
-    #[sea_orm(iden = "today")]
+    #[sea_orm(iden = "last")]
     Table,
 }

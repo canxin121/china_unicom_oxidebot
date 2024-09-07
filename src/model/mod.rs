@@ -2,21 +2,21 @@ pub mod config;
 pub use config::ActiveModel as ConfigActiveModel;
 pub use config::Entity as ConfigEntity;
 pub use config::Model as ConfigModel;
-pub mod today;
-pub use today::ActiveModel as TodayActiveModel;
-pub use today::Entity as TodayEntity;
-pub use today::Model as TodayModel;
-pub mod yesterday;
-pub use yesterday::ActiveModel as YesterdayActiveModel;
-pub use yesterday::Entity as YesterdayEntity;
-pub use yesterday::Model as YesterdayModel;
+pub mod last;
+pub use last::ActiveModel as LastActiveModel;
+pub use last::Entity as LastEntity;
+pub use last::Model as LastModel;
+pub mod daily;
+pub use daily::ActiveModel as DailyActiveModel;
+pub use daily::Entity as DailyEntity;
+pub use daily::Model as DailyModel;
 
 #[cfg(test)]
 pub mod data_test {
-    use crate::model::today::build_today_data;
+    use crate::model::last::build_last_active;
     use crate::model::{
-        ConfigActiveModel, ConfigEntity, ConfigModel, TodayActiveModel, TodayEntity, TodayModel,
-        YesterdayActiveModel, YesterdayEntity, YesterdayModel,
+        ConfigActiveModel, ConfigEntity, ConfigModel, DailyActiveModel, DailyEntity, DailyModel,
+        LastActiveModel, LastEntity, LastModel,
     };
     use crate::utils::db::init_db;
     use china_unicom_rs::data::ChinaUnicomData;
@@ -40,19 +40,19 @@ pub mod data_test {
             ..Default::default()
         }
         .into();
-        let today_active: TodayActiveModel = TodayModel {
+        let today_active: LastActiveModel = LastModel {
             user: "1".to_string(),
             ..Default::default()
         }
         .into();
-        let yesterday_active: YesterdayActiveModel = YesterdayModel {
+        let yesterday_active: DailyActiveModel = DailyModel {
             user: "1".to_string(),
             ..Default::default()
         }
         .into();
         let config = ConfigEntity::insert(config_active).exec(&db).await.unwrap();
-        let today = TodayEntity::insert(today_active).exec(&db).await.unwrap();
-        let yesterday = YesterdayEntity::insert(yesterday_active)
+        let today = LastEntity::insert(today_active).exec(&db).await.unwrap();
+        let yesterday = DailyEntity::insert(yesterday_active)
             .exec(&db)
             .await
             .unwrap();
@@ -66,8 +66,8 @@ pub mod data_test {
     async fn get_all() {
         let db = init_db().await.unwrap();
         let config = ConfigEntity::find().all(&db).await.unwrap();
-        let today = TodayEntity::find().all(&db).await.unwrap();
-        let yesterday = YesterdayEntity::find().all(&db).await.unwrap();
+        let today = LastEntity::find().all(&db).await.unwrap();
+        let yesterday = DailyEntity::find().all(&db).await.unwrap();
         assert!(config.len() > 0);
         assert!(today.len() > 0);
         assert!(yesterday.len() > 0);
@@ -79,8 +79,8 @@ pub mod data_test {
     #[tokio::test]
     async fn relation_all() {
         let db = init_db().await.unwrap();
-        let today = TodayEntity::find().one(&db).await.unwrap().unwrap();
-        let yesterday = YesterdayEntity::find().one(&db).await.unwrap().unwrap();
+        let today = LastEntity::find().one(&db).await.unwrap().unwrap();
+        let yesterday = DailyEntity::find().one(&db).await.unwrap().unwrap();
         let config = ConfigEntity::find().one(&db).await.unwrap().unwrap();
 
         let today_config = today.find_related(ConfigEntity).all(&db).await.unwrap();
@@ -91,13 +91,13 @@ pub mod data_test {
             .unwrap()
             .unwrap();
         let config_today = config
-            .find_related(TodayEntity)
+            .find_related(LastEntity)
             .one(&db)
             .await
             .unwrap()
             .unwrap();
         let config_yesterday = config
-            .find_related(YesterdayEntity)
+            .find_related(DailyEntity)
             .one(&db)
             .await
             .unwrap()
@@ -111,11 +111,11 @@ pub mod data_test {
     #[tokio::test]
     async fn update_all() {
         let db = init_db().await.unwrap();
-        let today = build_today_data(ChinaUnicomData::default(), "1".to_string(), "1".to_string());
+        let today = build_last_active(ChinaUnicomData::default(), "1".to_string(), "1".to_string());
         today.update(&db).await.unwrap();
 
         let yesterday =
-            build_today_data(ChinaUnicomData::default(), "1".to_string(), "1".to_string());
+            build_last_active(ChinaUnicomData::default(), "1".to_string(), "1".to_string());
         yesterday.update(&db).await.unwrap();
 
         let mut config: ConfigActiveModel = ConfigModel::default().into();

@@ -2,10 +2,8 @@ use china_unicom_rs::data::ChinaUnicomData;
 use chrono::{DateTime, Local};
 use sea_orm::{entity::prelude::*, Set, Unchanged};
 
-use super::YesterdayModel;
-
 #[derive(Clone, Debug, Default, DeriveEntityModel)]
-#[sea_orm(table_name = "today")]
+#[sea_orm(table_name = "daily")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub user: String,
@@ -52,31 +50,6 @@ pub struct Model {
     pub non_limit_voice: i64,
 }
 
-impl Into<YesterdayModel> for Model {
-    fn into(self) -> YesterdayModel {
-        YesterdayModel {
-            user: self.user,
-            bot: self.bot,
-            package_name: self.package_name,
-            time: self.time,
-            sum_flow_used: self.sum_flow_used,
-            limit_flow_used: self.limit_flow_used,
-            non_limit_flow_used: self.non_limit_flow_used,
-            free_flow_used: self.free_flow_used,
-            non_free_flow_used: self.non_free_flow_used,
-            sum_flow: self.sum_flow,
-            limit_flow: self.limit_flow,
-            non_limit_flow: self.non_limit_flow,
-            sum_voice_used: self.sum_voice_used,
-            limit_voice_used: self.limit_voice_used,
-            non_limit_voice_used: self.non_limit_voice_used,
-            sum_voice: self.sum_voice,
-            limit_voice: self.limit_voice,
-            non_limit_voice: self.non_limit_voice,
-        }
-    }
-}
-
 impl Into<ChinaUnicomData> for Model {
     fn into(self) -> ChinaUnicomData {
         ChinaUnicomData {
@@ -100,33 +73,6 @@ impl Into<ChinaUnicomData> for Model {
     }
 }
 
-pub fn build_today_data(
-    data: ChinaUnicomData,
-    user: String,
-    bot: String,
-) -> super::TodayActiveModel {
-    super::TodayActiveModel {
-        user: Unchanged(user),
-        bot: Unchanged(bot),
-        package_name: Set(data.package_name),
-        time: Set(data.time),
-        sum_flow_used: Set(data.sum_flow_used),
-        limit_flow_used: Set(data.limit_flow_used),
-        non_limit_flow_used: Set(data.non_limit_flow_used),
-        free_flow_used: Set(data.free_flow_used),
-        non_free_flow_used: Set(data.non_free_flow_used),
-        sum_flow: Set(data.sum_flow),
-        limit_flow: Set(data.limit_flow),
-        non_limit_flow: Set(data.non_limit_flow),
-        sum_voice_used: Set(data.sum_voice_used),
-        limit_voice_used: Set(data.limit_voice_used),
-        non_limit_voice_used: Set(data.non_limit_voice_used),
-        sum_voice: Set(data.sum_voice),
-        limit_voice: Set(data.limit_voice),
-        non_limit_voice: Set(data.non_limit_voice),
-    }
-}
-
 #[derive(Copy, Clone, Debug, EnumIter)]
 pub enum Relation {
     Config,
@@ -146,6 +92,56 @@ impl RelationTrait for Relation {
 impl Related<super::config::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Config.def()
+    }
+}
+
+pub fn build_daily(data: ChinaUnicomData, user: String, bot: String) -> super::DailyModel {
+    super::DailyModel {
+        user,
+        bot,
+        package_name: data.package_name,
+        time: data.time,
+        sum_flow_used: data.sum_flow_used,
+        limit_flow_used: data.limit_flow_used,
+        non_limit_flow_used: data.non_limit_flow_used,
+        free_flow_used: data.free_flow_used,
+        non_free_flow_used: data.non_free_flow_used,
+        sum_flow: data.sum_flow,
+        limit_flow: data.limit_flow,
+        non_limit_flow: data.non_limit_flow,
+        sum_voice_used: data.sum_voice_used,
+        limit_voice_used: data.limit_voice_used,
+        non_limit_voice_used: data.non_limit_voice_used,
+        sum_voice: data.sum_voice,
+        limit_voice: data.limit_voice,
+        non_limit_voice: data.non_limit_voice,
+    }
+}
+
+pub fn build_daily_active(
+    data: ChinaUnicomData,
+    user: String,
+    bot: String,
+) -> super::DailyActiveModel {
+    super::DailyActiveModel {
+        user: Unchanged(user),
+        bot: Unchanged(bot),
+        package_name: Set(data.package_name),
+        time: Set(data.time),
+        sum_flow_used: Set(data.sum_flow_used),
+        limit_flow_used: Set(data.limit_flow_used),
+        non_limit_flow_used: Set(data.non_limit_flow_used),
+        free_flow_used: Set(data.free_flow_used),
+        non_free_flow_used: Set(data.non_free_flow_used),
+        sum_flow: Set(data.sum_flow),
+        limit_flow: Set(data.limit_flow),
+        non_limit_flow: Set(data.non_limit_flow),
+        sum_voice_used: Set(data.sum_voice_used),
+        limit_voice_used: Set(data.limit_voice_used),
+        non_limit_voice_used: Set(data.non_limit_voice_used),
+        sum_voice: Set(data.sum_voice),
+        limit_voice: Set(data.limit_voice),
+        non_limit_voice: Set(data.non_limit_voice),
     }
 }
 

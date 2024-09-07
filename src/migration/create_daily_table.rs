@@ -1,4 +1,4 @@
-use crate::model::yesterday::Column;
+use crate::model::daily::Column;
 use sea_orm_migration::{prelude::*, schema::*};
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -48,6 +48,6 @@ impl MigrationTrait for Migration {
 
 #[derive(DeriveIden)]
 pub enum YesterdayTable {
-    #[sea_orm(iden = "yesterday")]
+    #[sea_orm(iden = "daily")]
     Table,
 }

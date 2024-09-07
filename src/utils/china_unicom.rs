@@ -1,31 +1,29 @@
 use anyhow::Result;
 use china_unicom_rs::{data::ChinaUnicomData, online::online, query::query_china_unicom_data};
-use chrono::{NaiveDate, TimeDelta};
+use chrono::TimeDelta;
 use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use tokio::{task::JoinHandle, time::sleep};
 
 use crate::model::{
-    today::build_today_data, ConfigActiveModel, ConfigEntity, ConfigModel, TodayActiveModel,
-    TodayEntity, TodayModel, YesterdayActiveModel, YesterdayEntity, YesterdayModel,
+    daily::build_daily_active, last::build_last_active, ConfigActiveModel, ConfigEntity,
+    ConfigModel, DailyActiveModel, DailyEntity, DailyModel, LastActiveModel, LastEntity, LastModel,
 };
 
 use super::oxidebot_util::send_message;
 
-// 一段时间内消耗的
-const FORMAT_DURATION: &'static str = "[区间时长] 跳: [区间流量收费用量], 免: [区间流量免费用量]";
+const FORMAT_LAST: &'static str = "[区间时长] 跳: [区间流量收费用量], 免: [区间流量免费用量]";
 
-// 今日消耗的
 const FORMAT_DAILY: &'static str = "今跳:[区间流量收费用量], 今免: [区间流量免费用量]";
 
-// 余量
 const FORMAT_LEFT: &'static str = "通用余: [流量通用余量], 定向余: [流量定向余量]";
-// 用量
+
 const FORMAT_USED: &'static str = "通用已用: [流量通用用量], 定向已用: [流量定向用量]";
 
 pub async fn query_once(
     db: &sea_orm::DatabaseConnection,
     config: &ConfigModel,
 ) -> anyhow::Result<(bool, String)> {
+    // when the cookie is expired, we need to update the cookie
     let new_data = match query_china_unicom_data(&config.cookie).await {
         Ok(data) => data,
         Err(e) => {
@@ -39,54 +37,43 @@ pub async fn query_once(
         }
     };
 
-    let yesterday = YesterdayEntity::find_by_id(config.user.as_str())
+    let daily_model = DailyEntity::find_by_id(config.user.as_str())
         .one(db)
         .await?;
-    let today = TodayEntity::find_by_id(config.user.as_str())
-        .one(db)
-        .await?;
-    // why should_send is unused?
-    #[allow(unused_assignments)]
-    let mut should_send = false;
+    let last_model = LastEntity::find_by_id(config.user.as_str()).one(db).await?;
+
+    let updated_last = handle_data_update(&new_data, &last_model, &daily_model, config, db).await?;
+
+    let message = build_message(&new_data, last_model, daily_model)?;
+
+    Ok((updated_last, message))
+}
+
+fn build_message(
+    new_data: &ChinaUnicomData,
+    last_model: Option<LastModel>,
+    daily_model: Option<DailyModel>,
+) -> Result<String> {
     let mut message = format!("{}:\n", new_data.package_name);
-
-    match yesterday {
-        Some(yesterday_model) => match today {
-            Some(today_model) => {
-                should_send = handle_data_update(&new_data, &today_model, true, config, db).await?;
-
-                message += &new_data.format_with_last(&FORMAT_DURATION, &today_model.into())?;
+    match daily_model {
+        Some(daily_model) => match last_model {
+            Some(last_model) => {
+                message += &new_data.format_with_last(&FORMAT_LAST, &last_model.into())?;
                 message += "\n";
-                message += &new_data.format_with_last(&FORMAT_DAILY, &yesterday_model.into())?;
+                message += &new_data.format_with_last(&FORMAT_DAILY, &daily_model.into())?;
                 message += "\n";
             }
             None => {
-                // this should not happen
-                YesterdayEntity::delete_by_id(config.user.as_str())
-                    .exec(db)
-                    .await?;
-
-                let new_today_active: TodayActiveModel =
-                    build_today_data(new_data.clone(), config.user.clone(), config.bot.clone());
-                TodayEntity::update(new_today_active).exec(db).await?;
-                message += &new_data.format(&FORMAT_DURATION)?;
+                message += &new_data.format(&FORMAT_LAST)?;
                 message += "\n";
-                should_send = true;
             }
         },
-        None => match today {
+        None => match last_model {
             Some(today_model) => {
-                should_send =
-                    handle_data_update(&new_data, &today_model, false, config, db).await?;
-                message += &new_data.format_with_last(&FORMAT_DURATION, &today_model.into())?;
+                message += &new_data.format_with_last(&FORMAT_LAST, &today_model.into())?;
                 message += "\n";
             }
-            None => {
-                let new_today_active: TodayActiveModel =
-                    build_today_data(new_data.clone(), config.user.clone(), config.bot.clone());
-                TodayEntity::insert(new_today_active).exec(db).await?;
-                should_send = true;
-            }
+            None => {}
         },
     }
 
@@ -94,85 +81,91 @@ pub async fn query_once(
     message += "\n";
     message += &new_data.format(&FORMAT_LEFT)?;
     message += "\n";
-    Ok((should_send, message))
+
+    Ok(message)
+}
+
+fn should_update_last(
+    config: &ConfigModel,
+    new_data: &ChinaUnicomData,
+    last_model: &Option<LastModel>,
+) -> bool {
+    if last_model.is_none() {
+        return true;
+    }
+    let last_model = last_model.as_ref().unwrap();
+    if let Some(timeout) = config.timeout {
+        if new_data.time - last_model.time > TimeDelta::seconds(timeout) {
+            return true;
+        }
+    }
+
+    if let Some(free_threshold) = config.free_threshold {
+        if new_data.free_flow_used - last_model.free_flow_used > free_threshold {
+            return true;
+        }
+    }
+
+    if let Some(nonfree_threshold) = config.nonfree_threshold {
+        if new_data.non_free_flow_used - last_model.non_free_flow_used > nonfree_threshold {
+            return true;
+        }
+    }
+
+    false
 }
 
 async fn handle_data_update(
     new_data: &ChinaUnicomData,
-    today_model: &TodayModel,
-    has_yesterday_model: bool,
+    last_model: &Option<LastModel>,
+    daily_model: &Option<DailyModel>,
     config: &ConfigModel,
     db: &sea_orm::DatabaseConnection,
 ) -> anyhow::Result<bool> {
-    let new_data_date = new_data.time.date_naive();
-    let today_data_date = today_model.time.date_naive();
-
-    // handle yesterday data
-    // has no yesterday model, insert it with today model
-    if !has_yesterday_model {
-        let data_: YesterdayModel = today_model.clone().into();
-        let active_data_: YesterdayActiveModel = data_.into();
-        YesterdayEntity::insert(active_data_).exec(db).await?;
-    // already has yesterday model, but the date is not the same
-    } else if new_data_date != today_data_date {
-        // if the new data is the next day of today data, update the yesterday model
-        if today_data_date.succ_opt() == Some(new_data_date) {
-            let data_: YesterdayModel = today_model.clone().into();
-            let active_data_: YesterdayActiveModel = data_.into();
-            YesterdayEntity::update(active_data_).exec(db).await?;
-        // otherwise, delete the yesterday model
-        } else if has_yesterday_model {
-            YesterdayEntity::delete_by_id(config.user.as_str())
+    // handle daily data update
+    // when the new_data time not equal to the daily data time or the daily data is not exist
+    if (daily_model.is_none()
+        || new_data.time.date_naive() != daily_model.as_ref().unwrap().time.date_naive())
+        && daily_model.is_some()
+    {
+        // delete the old daily data
+        if daily_model.is_some() {
+            DailyEntity::delete_by_id(config.user.as_str())
                 .exec(db)
                 .await?;
         }
+        // insert the new daily data
+        match last_model {
+            Some(ref last_model) => {
+                // if the last model is exist, we can use the last model to create the new daily model
+                let new_daily_model: DailyModel = last_model.clone().into();
+
+                let new_daily_active: DailyActiveModel = new_daily_model.into();
+                DailyEntity::insert(new_daily_active).exec(db).await?;
+            }
+            None => {
+                // if the last model is not exist, we need to create a new daily model
+
+                let daily_data_active =
+                    build_daily_active(new_data.clone(), config.user.clone(), config.bot.clone());
+                DailyEntity::insert(daily_data_active).exec(db).await?;
+            }
+        }
     }
 
-    fn should_update_today(
-        config: &ConfigModel,
-        new_data: &ChinaUnicomData,
-        today_model: &TodayModel,
-        new_data_date: NaiveDate,
-        today_data_date: NaiveDate,
-    ) -> bool {
-        if new_data_date != today_data_date {
-            return true;
-        }
-
-        if let Some(timeout) = config.timeout {
-            if new_data.time - today_model.time > TimeDelta::seconds(timeout) {
-                return true;
-            }
-        }
-
-        if let Some(free_threshold) = config.free_threshold {
-            if new_data.free_flow_used - today_model.free_flow_used > free_threshold {
-                return true;
-            }
-        }
-
-        if let Some(nonfree_threshold) = config.nonfree_threshold {
-            if new_data.non_free_flow_used - today_model.non_free_flow_used > nonfree_threshold {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    let should_update_today = should_update_today(
-        config,
-        new_data,
-        today_model,
-        new_data_date,
-        today_data_date,
-    );
+    // the judge of update last data is complex, so we need to extract it to a function
+    let should_update_today = should_update_last(config, new_data, &last_model);
 
     if should_update_today {
-        let new_today_active: TodayActiveModel =
-            build_today_data(new_data.clone(), config.user.clone(), config.bot.clone());
-        tracing::info!("Update today data: {:?}", new_today_active);
-        TodayEntity::update(new_today_active).exec(db).await?;
+        if last_model.is_some() {
+            LastEntity::delete_by_id(config.user.as_str())
+                .exec(db)
+                .await?;
+        }
+
+        let new_last_active: LastActiveModel =
+            build_last_active(new_data.clone(), config.user.clone(), config.bot.clone());
+        LastEntity::insert(new_last_active).exec(db).await?;
     }
     Ok(should_update_today)
 }

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use clap::Parser;
 use dashmap::DashMap;
-use model::{ConfigActiveModel, ConfigEntity, ConfigModel, TodayEntity, YesterdayEntity};
+use model::{ConfigActiveModel, ConfigEntity, ConfigModel, LastEntity, DailyEntity};
 use oxidebot::{
     handler::Handler, matcher::Matcher, source::message::MessageSegment, EventHandlerTrait,
 };
@@ -162,8 +162,8 @@ impl ChinaUnicomHandler {
             task.abort();
         }
 
-        let _ = TodayEntity::delete_by_id(user).exec(&self.db).await;
-        let _ = YesterdayEntity::delete_by_id(user).exec(&self.db).await;
+        let _ = LastEntity::delete_by_id(user).exec(&self.db).await;
+        let _ = DailyEntity::delete_by_id(user).exec(&self.db).await;
         match ConfigEntity::delete_by_id(user).exec(&self.db).await {
             Ok(_) => {
                 self.send_message(matcher, "Deregister success.").await?;
