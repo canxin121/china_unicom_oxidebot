@@ -124,9 +124,8 @@ async fn handle_data_update(
 ) -> anyhow::Result<bool> {
     // handle daily data update
     // when the new_data time not equal to the daily data time or the daily data is not exist
-    if (daily_model.is_none()
-        || new_data.time.date_naive() != daily_model.as_ref().unwrap().time.date_naive())
-        && daily_model.is_some()
+    if daily_model.is_none()
+        || new_data.time.date_naive() != daily_model.as_ref().unwrap().time.date_naive()
     {
         // delete the old daily data
         if daily_model.is_some() {
