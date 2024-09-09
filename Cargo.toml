@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0.86"
-oxidebot = "0.1.3"
+anyhow = "1.0.87"
+oxidebot = "0.1.4"
 serde_json = "1.0.128"
 tokio = { version = "1.40.0", features = ["full"] }
 china_unicom_rs = { git = "https://github.com/canxin121/china_unicom_rs" }
@@ -21,4 +21,4 @@ sea-orm-migration = { version = "1.0.1", features = [
     "sqlx-sqlite",
 ], default-features = false }
 tracing = "0.1.40"
-dashmap = "6.0.1"
+dashmap = "6.1.0"
