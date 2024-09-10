@@ -22,7 +22,8 @@ async fn main() {
             .await,
         )
         .await
-        .handler(ChinaUnicomHandler::new().await)
+        .wait_handler(|s| Box::pin(async move { ChinaUnicomHandler::new(s).await }))
+        .await
         .run_block()
         .await;
 }
