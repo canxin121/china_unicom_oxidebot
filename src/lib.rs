@@ -88,9 +88,11 @@ impl ChinaUnicomHandler {
     }
 
     async fn handle_register(&self, matcher: &Matcher, user: &str, bot: &str) -> Result<()> {
-        let _ = matcher.try_send_message(vec![MessageSegment::text(
-            "Please send your China Unicom Cookie in 30s.".to_string(),
-        )]);
+        let _ = matcher
+            .try_send_message(vec![MessageSegment::text(
+                "Please send your China Unicom Cookie in 30s.".to_string(),
+            )])
+            .await?;
 
         let (cookie, matcher) = wait_user_text_generic::<String>(
             matcher,
@@ -101,9 +103,11 @@ impl ChinaUnicomHandler {
         )
         .await?;
 
-        let _ = matcher.try_send_message(vec![MessageSegment::text(
-            "Please send your China Unicom AppId in 30s.".to_string(),
-        )]);
+        let _ = matcher
+            .try_send_message(vec![MessageSegment::text(
+                "Please send your China Unicom AppId in 30s.".to_string(),
+            )])
+            .await?;
 
         let (app_id, matcher) = wait_user_text_generic::<String>(
             &matcher,
@@ -116,7 +120,7 @@ impl ChinaUnicomHandler {
 
         let _ = matcher.try_send_message(vec![MessageSegment::text(
             "Please send your China Unicom TokenOnline in 30s.".to_string(),
-        )]);
+        )]).await?;
 
         let (token_online, matcher) = wait_user_text_generic::<String>(
             &matcher,
