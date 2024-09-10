@@ -1,11 +1,12 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
 use clap::Parser;
 use dashmap::DashMap;
-use model::{ConfigActiveModel, ConfigEntity, ConfigModel, LastEntity, DailyEntity};
+use model::{ConfigActiveModel, ConfigEntity, ConfigModel, DailyEntity, LastEntity};
 use oxidebot::{
-    handler::Handler, matcher::Matcher, source::message::MessageSegment, EventHandlerTrait,
+    handler::Handler, manager::BroadcastSender, matcher::Matcher, source::message::MessageSegment,
+    wait_user_text_generic, EasyBool, EventHandlerTrait,
 };
 use sea_orm::{EntityTrait, Set};
 use tokio::task::JoinHandle;
@@ -24,13 +25,15 @@ use crate::cli::Cli;
 pub struct ChinaUnicomHandler {
     pub db: sea_orm::DatabaseConnection,
     pub tasks: Arc<DashMap<String, JoinHandle<()>>>,
+    pub broadcast_sender: BroadcastSender,
 }
 
 impl ChinaUnicomHandler {
-    pub async fn new() -> Handler {
+    pub async fn new(broadcast_sender: BroadcastSender) -> Handler {
         let self_ = Self {
             db: init_db().await.unwrap(),
             tasks: Arc::new(DashMap::new()),
+            broadcast_sender,
         };
         self_.start_all_tasks().await.unwrap();
         Handler {
@@ -84,15 +87,46 @@ impl ChinaUnicomHandler {
         Ok(None)
     }
 
-    async fn handle_register(
-        &self,
-        matcher: &Matcher,
-        cookie: String,
-        app_id: String,
-        token_online: String,
-        user: &str,
-        bot: &str,
-    ) -> Result<()> {
+    async fn handle_register(&self, matcher: &Matcher, user: &str, bot: &str) -> Result<()> {
+        let _ = matcher.try_send_message(vec![MessageSegment::text(
+            "Please send your China Unicom Cookie in 30s.".to_string(),
+        )]);
+
+        let (cookie, matcher) = wait_user_text_generic::<String>(
+            matcher,
+            &self.broadcast_sender,
+            Duration::from_secs(30),
+            1,
+            None,
+        )
+        .await?;
+
+        let _ = matcher.try_send_message(vec![MessageSegment::text(
+            "Please send your China Unicom AppId in 30s.".to_string(),
+        )]);
+
+        let (app_id, matcher) = wait_user_text_generic::<String>(
+            &matcher,
+            &self.broadcast_sender,
+            Duration::from_secs(30),
+            1,
+            None,
+        )
+        .await?;
+
+        let _ = matcher.try_send_message(vec![MessageSegment::text(
+            "Please send your China Unicom TokenOnline in 30s.".to_string(),
+        )]);
+
+        let (token_online, matcher) = wait_user_text_generic::<String>(
+            &matcher,
+            &self.broadcast_sender,
+            Duration::from_secs(30),
+            1,
+            None,
+        )
+        .await?;
+
         let config = ConfigModel {
             user: user.to_string(),
             bot: bot.to_string(),
@@ -106,22 +140,22 @@ impl ChinaUnicomHandler {
         match ConfigEntity::insert(config_active).exec(&self.db).await {
             Ok(_) => {
                 self.send_message(
-                    matcher,
+                    &matcher,
                     "Register success, your task will be automatically started, you can use the `task` command to view the status of the task or control it.",
                 )
                 .await?;
-                self.handle_add_task(matcher, user).await?;
+                self.handle_add_task(&matcher, user).await?;
             }
             Err(sea_orm::DbErr::RecordNotInserted) => {
                 self.send_message(
-                    matcher,
+                    &matcher,
                     "You have already registered, if you want to update your cookie, please use the `set` command.",
                 )
                 .await?;
             }
             Err(e) => {
                 self.send_message(
-                    matcher,
+                    &matcher,
                     &format!("An error occurred while registering: {:?}", e),
                 )
                 .await?;
@@ -148,13 +182,24 @@ impl ChinaUnicomHandler {
         Ok(())
     }
 
-    async fn handle_deregister(&self, matcher: &Matcher, user: &str, yes: bool) -> Result<()> {
-        if !yes {
-            self.send_message(
-                matcher,
-                "Please confirm that you want to deregister by adding the `-y`.",
-            )
+    async fn handle_deregister(&self, matcher: &Matcher, user: &str) -> Result<()> {
+        let _ = matcher
+            .try_send_message(vec![MessageSegment::text(
+                "Are you sure you want to cancel the China Unicom Oxidebot service?\nThis will stop notification service and delete all your data.\nSend 'y' to confirm, 'n' to cancel."
+                    .to_string(),
+            )])
             .await?;
+        let (easy_bool, matcher) = wait_user_text_generic::<EasyBool>(
+            matcher,
+            &self.broadcast_sender,
+            Duration::from_secs(30),
+            1,
+            None,
+        )
+        .await?;
+
+        // cancel
+        if !easy_bool.0 {
             return Ok(());
         }
 
@@ -166,16 +211,16 @@ impl ChinaUnicomHandler {
         let _ = DailyEntity::delete_by_id(user).exec(&self.db).await;
         match ConfigEntity::delete_by_id(user).exec(&self.db).await {
             Ok(_) => {
-                self.send_message(matcher, "Deregister success.").await?;
+                self.send_message(&matcher, "Deregister success.").await?;
             }
             Err(e) => match e {
                 sea_orm::DbErr::RecordNotFound(_) => {
-                    self.send_message(matcher, "You have not registered yet.")
+                    self.send_message(&matcher, "You have not registered yet.")
                         .await?;
                 }
                 other => {
                     self.send_message(
-                        matcher,
+                        &matcher,
                         &format!(
                             "An error occurred while deregistering: {}",
                             other.to_string()
@@ -433,20 +478,8 @@ impl EventHandlerTrait for ChinaUnicomHandler {
 
                 match Cli::try_parse_from(raw_text.split_whitespace()) {
                     Ok(cli) => match cli.command {
-                        cli::Commands::Register {
-                            cookie,
-                            app_id,
-                            token_online,
-                        } => {
-                            self.handle_register(
-                                &matcher,
-                                cookie,
-                                app_id,
-                                token_online,
-                                &user,
-                                &bot,
-                            )
-                            .await?;
+                        cli::Commands::Register => {
+                            self.handle_register(&matcher, &user, &bot).await?;
                         }
                         cli::Commands::Query => {
                             self.handle_query(&matcher).await?;
@@ -487,8 +520,8 @@ impl EventHandlerTrait for ChinaUnicomHandler {
                                 .await?;
                             }
                         },
-                        cli::Commands::Deregister { yes } => {
-                            self.handle_deregister(&matcher, &user, yes).await?;
+                        cli::Commands::Deregister => {
+                            self.handle_deregister(&matcher, &user).await?;
                         }
                     },
                     Err(e) => {

@@ -43,22 +43,11 @@ pub enum ConfigCommand {
 pub enum Commands {
     /// Register to China Unicom Oxidebot service
     #[command(short_flag = 'r')]
-    Register {
-        /// String: Cookie for login
-        #[arg(short, long)]
-        cookie: String,
-        #[arg(short, long)]
-        app_id: String,
-        #[arg(short, long)]
-        token_online: String,
-    },
+    Register,
 
     /// Deregister from China Unicom Oxidebot service
     #[command(short_flag = 'd')]
-    Deregister {
-        #[arg(short = 'y')]
-        yes: bool,
-    },
+    Deregister,
 
     /// Show or set configuration
     #[command(short_flag = 'c')]
