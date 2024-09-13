@@ -16,27 +16,7 @@ pub enum ConfigCommand {
     Show,
 
     /// Set configuration, use 'None' to set null
-    Set {
-        /// String?: Cookie for login, should contain 'ecs_token' and 'ecs_acc'
-        #[arg(short, long)]
-        cookie: Option<String>,
-
-        /// Int?: Interval time for task execution in seconds
-        #[arg(short, long)]
-        interval: Option<i64>,
-
-        /// Int?: After this time is exceeded, a notification is sent even if the threshold is not exceeded
-        #[arg(short, long)]
-        timeout: Option<String>,
-
-        /// Float?: Free flow threshold, send notification if exceeded
-        #[arg(short, long)]
-        free_threshold: Option<String>,
-
-        /// Float?: Nonfree flow threshold, send notification if exceeded
-        #[arg(short, long)]
-        nonfree_threshold: Option<String>,
-    },
+    Set,
 }
 
 #[derive(Subcommand)]

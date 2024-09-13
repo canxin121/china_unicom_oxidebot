@@ -13,6 +13,7 @@ use tokio::task::JoinHandle;
 use utils::{
     china_unicom::{create_china_unicom_task, query_once},
     db::init_db,
+    option_t::OptionT,
     oxidebot_util::{get_user_bot_from, send_message},
 };
 pub mod cli;
@@ -75,7 +76,7 @@ impl ChinaUnicomHandler {
             .await?;
         Ok(())
     }
-
+    /// get user config, if not registered, send message to user
     async fn get_user_config(&self, matcher: &Matcher) -> Result<Option<ConfigModel>> {
         if let Some((user, _bot)) = get_user_bot_from(matcher).await {
             let config = ConfigEntity::find_by_id(user).one(&self.db).await?;
@@ -118,9 +119,11 @@ impl ChinaUnicomHandler {
         )
         .await?;
 
-        let _ = matcher.try_send_message(vec![MessageSegment::text(
-            "Please send your China Unicom TokenOnline in 30s.".to_string(),
-        )]).await?;
+        let _ = matcher
+            .try_send_message(vec![MessageSegment::text(
+                "Please send your China Unicom TokenOnline in 30s.".to_string(),
+            )])
+            .await?;
 
         let (token_online, matcher) = wait_user_text_generic::<String>(
             &matcher,
@@ -245,104 +248,127 @@ impl ChinaUnicomHandler {
         Ok(())
     }
 
-    async fn handle_config_set(
-        &self,
-        matcher: &Matcher,
-        user: &str,
-        cookie: Option<String>,
-        interval: Option<i64>,
-        timeout: Option<String>,
-        free_threshold: Option<String>,
-        nonfree_threshold: Option<String>,
-    ) -> Result<()> {
+    async fn handle_config_set(&self, matcher: &Matcher, user: &str) -> Result<()> {
         if let Some(config) = self.get_user_config(matcher).await? {
-            let mut config_active: ConfigActiveModel = config.into();
-            let mut need_update = false;
+            matcher
+                .try_send_message(vec![MessageSegment::text(
+                    "Please send a option number to set:\n1.cookie: String\n2.interval: i64(seconds)\n3.timeout: i64(seconds) or None\n4.free_threshold: f64(GB) or None\n5.nonfree_threshold: f64(GB) or None\n\nSend 0 to cancel",
+                )])
+                .await?;
 
-            macro_rules! set_option {
-                ($field:expr, $value:expr, $parser:expr) => {
-                    if let Some(value) = $value {
-                        let lower = value.to_lowercase();
-                        if lower == "none" || lower == "null" {
-                            $field = Set(None);
-                            need_update = true;
-                        } else {
-                            match $parser(value) {
-                                Ok(parsed) => {
-                                    $field = Set(Some(parsed));
-                                    need_update = true;
-                                }
-                                Err(e) => {
-                                    self.send_message(matcher, e).await?;
-                                    return Ok(());
-                                }
-                            }
-                        }
-                    }
-                };
-            }
+            let (option, matcher) = wait_user_text_generic::<u8>(
+                matcher,
+                &self.broadcast_sender,
+                Duration::from_secs(30),
+                3,
+                Some("Please send a number between 0 and 5".to_string()),
+            )
+            .await?;
 
-            if let Some(cookie) = cookie {
-                config_active.cookie = Set(cookie);
-                need_update = true;
-            }
-
-            if let Some(interval) = interval {
-                if interval < 60 {
-                    self.send_message(
-                        matcher,
-                        "The interval time must be greater than or equal to 60 seconds.",
-                    )
-                    .await?;
+            #[allow(unused_assignments)]
+            let mut config_active: Option<ConfigActiveModel> = None;
+            match option {
+                0 => {
+                    matcher
+                        .try_send_message(vec![MessageSegment::text(
+                            "Config set operation cancel.",
+                        )])
+                        .await?;
                     return Ok(());
                 }
-                config_active.interval = Set(interval);
-                need_update = true;
-            }
-
-            set_option!(config_active.timeout, timeout, |t: String| {
-                t.parse::<i64>()
-                    .map_err(|_| "The timeout time must be an integer.")
-            });
-
-            set_option!(
-                config_active.free_threshold,
-                free_threshold,
-                |ft: String| {
-                    ft.parse::<f64>()
-                        .map_err(|_| "The free threshold must be a float.")
-                }
-            );
-
-            set_option!(
-                config_active.nonfree_threshold,
-                nonfree_threshold,
-                |nft: String| {
-                    nft.parse::<f64>()
-                        .map_err(|_| "The nonfree threshold must be a float.")
-                }
-            );
-
-            if !need_update {
-                self.send_message(
-                    matcher,
-                    "No parameter is updated, please specify at least one parameter to update, you can use -h to view the help information.",
-                )
-                .await?;
-                return Ok(());
-            }
-
-            match ConfigEntity::update(config_active).exec(&self.db).await {
-                Ok(_) => {
-                    let _ = self.send_message(matcher, "Update success.").await;
-                    self.handle_restart_task(matcher, user).await?;
-                }
-                Err(e) => {
-                    self.send_message(
-                        matcher,
-                        &format!("An error occurred while updating: {:?}", e),
+                1 => {
+                    let (cookie, _matcher) = wait_user_text_generic::<String>(
+                        &matcher,
+                        &self.broadcast_sender,
+                        Duration::from_secs(30),
+                        1,
+                        None,
                     )
                     .await?;
+                    let mut config_active1: ConfigActiveModel = config.into();
+                    config_active1.cookie = Set(cookie);
+                    config_active = Some(config_active1);
+                }
+                2 => {
+                    let (interval, _matcher) = wait_user_text_generic::<i64>(
+                        &matcher,
+                        &self.broadcast_sender,
+                        Duration::from_secs(30),
+                        1,
+                        Some("Please enter a valid number for interval.".to_string()),
+                    )
+                    .await?;
+                    let mut config_active2: ConfigActiveModel = config.into();
+                    config_active2.interval = Set(interval);
+                    config_active = Some(config_active2);
+                }
+                3 => {
+                    let (timeout, _matcher) = wait_user_text_generic::<OptionT<i64>>(
+                        &matcher,
+                        &self.broadcast_sender,
+                        Duration::from_secs(30),
+                        1,
+                        Some("Please enter a valid number or 'none' for timeout.".to_string()),
+                    )
+                    .await?;
+                    let mut config_active3: ConfigActiveModel = config.into();
+                    config_active3.timeout = Set(timeout.0);
+                    config_active = Some(config_active3);
+                }
+                4 => {
+                    let (free_threshold, _matcher) = wait_user_text_generic::<OptionT<f64>>(
+                        &matcher,
+                        &self.broadcast_sender,
+                        Duration::from_secs(30),
+                        1,
+                        Some(
+                            "Please enter a valid number or 'none' for free_threshold.".to_string(),
+                        ),
+                    )
+                    .await?;
+                    let mut config_active4: ConfigActiveModel = config.into();
+                    config_active4.free_threshold = Set(free_threshold.0);
+                    config_active = Some(config_active4);
+                }
+                5 => {
+                    let (nonfree_threshold, _matcher) = wait_user_text_generic::<OptionT<f64>>(
+                        &matcher,
+                        &self.broadcast_sender,
+                        Duration::from_secs(30),
+                        1,
+                        Some(
+                            "Please enter a valid number or 'none' for nonfree_threshold."
+                                .to_string(),
+                        ),
+                    )
+                    .await?;
+                    let mut config_active5: ConfigActiveModel = config.into();
+                    config_active5.nonfree_threshold = Set(nonfree_threshold.0);
+                    config_active = Some(config_active5);
+                }
+                _ => {
+                    matcher
+                        .try_send_message(vec![MessageSegment::text(
+                            "Invalid option number, exited.",
+                        )])
+                        .await?;
+                    return Ok(());
+                }
+            }
+
+            if let Some(config_active) = config_active {
+                match ConfigEntity::update(config_active).exec(&self.db).await {
+                    Ok(_) => {
+                        let _ = self.send_message(&matcher, "Update success.").await;
+                        self.handle_restart_task(&matcher, user).await?;
+                    }
+                    Err(e) => {
+                        self.send_message(
+                            &matcher,
+                            &format!("An error occurred while updating: {:?}", e),
+                        )
+                        .await?;
+                    }
                 }
             }
         }
@@ -471,16 +497,20 @@ impl EventHandlerTrait for ChinaUnicomHandler {
                 if !raw_text.starts_with(Cli::name()) {
                     return Ok(());
                 }
-                if let Some(_) = matcher.try_get_group() {
+
+                if matcher.is_group().await {
                     self.send_message(&matcher, "This command can only be used in private chat.")
                         .await?;
                     return Ok(());
                 }
+
                 let (user, bot) = get_user_bot_from(&matcher)
                     .await
                     .ok_or(anyhow::anyhow!("User ot bot not found"))?;
 
-                match Cli::try_parse_from(raw_text.split_whitespace()) {
+                match Cli::try_parse_from(
+                    shlex::split(&raw_text).ok_or(anyhow::anyhow!("Parse shlex error"))?,
+                ) {
                     Ok(cli) => match cli.command {
                         cli::Commands::Register => {
                             self.handle_register(&matcher, &user, &bot).await?;
@@ -505,23 +535,8 @@ impl EventHandlerTrait for ChinaUnicomHandler {
                             cli::ConfigCommand::Show => {
                                 self.handle_config_show(&matcher).await?;
                             }
-                            cli::ConfigCommand::Set {
-                                cookie,
-                                interval,
-                                timeout,
-                                free_threshold,
-                                nonfree_threshold,
-                            } => {
-                                self.handle_config_set(
-                                    &matcher,
-                                    &user,
-                                    cookie,
-                                    interval,
-                                    timeout,
-                                    free_threshold,
-                                    nonfree_threshold,
-                                )
-                                .await?;
+                            cli::ConfigCommand::Set => {
+                                self.handle_config_set(&matcher, &user).await?;
                             }
                         },
                         cli::Commands::Deregister => {
