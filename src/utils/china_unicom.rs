@@ -143,7 +143,10 @@ async fn handle_data_update(
 
                 let new_daily_active: DailyActiveModel = new_daily_model.into();
                 DailyEntity::insert(new_daily_active).exec(db).await?;
-                tracing::info!("Insert new daily data using last data for user: {}", config.user);
+                tracing::info!(
+                    "Insert new daily data using last data for user: {}",
+                    config.user
+                );
             }
             None => {
                 // if the last model is not exist, we need to create a new daily model
@@ -151,7 +154,10 @@ async fn handle_data_update(
                 let daily_data_active =
                     build_daily_active(new_data.clone(), config.user.clone(), config.bot.clone());
                 DailyEntity::insert(daily_data_active).exec(db).await?;
-                tracing::info!("Insert new daily data using new data for user: {}", config.user);
+                tracing::info!(
+                    "Insert new daily data using new data for user: {}",
+                    config.user
+                );
             }
         }
     }
@@ -220,7 +226,6 @@ pub async fn create_china_unicom_task<DB: Into<sea_orm::DatabaseConnection>>(
                                     retry,
                                     e
                                 );
-                                retry -= 1;
                             }
                         }
                     }
