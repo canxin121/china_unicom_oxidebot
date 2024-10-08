@@ -27,7 +27,8 @@ pub async fn query_once(
     let new_data = match query_china_unicom_data(&config.cookie).await {
         Ok(data) => data,
         Err(e) => {
-            if e.to_string().contains("999998") {
+            let error_str = format!("{:?}", e);
+            if error_str.contains("999998") {
                 let new_config = handle_auth_update(config, db).await?;
                 tracing::info!("Update auth info for user: {}", new_config.user);
                 let data = query_china_unicom_data(&new_config.cookie).await?;
