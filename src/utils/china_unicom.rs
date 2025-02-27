@@ -212,32 +212,19 @@ pub async fn create_china_unicom_task<DB: Into<sea_orm::DatabaseConnection>>(
     }
 
     let handle = tokio::spawn(async move {
-        let mut retry = 3;
         let interval = std::time::Duration::from_secs(config.interval as u64);
-        while retry > 0 {
+        loop {
             sleep(interval).await;
             match query_once(&db, &config).await {
                 Ok((should_send, message)) => {
                     if should_send {
-                        match send_message(&user, &config.bot, message).await {
-                            Ok(_) => retry = 3,
-                            Err(e) => {
-                                tracing::error!(
-                                    "[Retry: {}]Error when send message to user: {}",
-                                    retry,
-                                    e
-                                );
-                            }
+                        if let Err(e) = send_message(&user, &config.bot, message).await {
+                            tracing::error!("Error when send message to user: {}", e);
                         }
                     }
                 }
                 Err(e) => {
-                    tracing::error!(
-                        "[Retry: {}]Error when query china unicom data: {}",
-                        retry,
-                        e
-                    );
-                    retry -= 1;
+                    tracing::error!("Error when query china unicom data: {}", e);
                 }
             }
         }
