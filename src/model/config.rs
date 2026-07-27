@@ -2,6 +2,8 @@ use std::fmt::Display;
 
 use sea_orm::entity::prelude::*;
 
+use china_unicom::utils::mask_secret;
+
 #[derive(Clone, Debug, DeriveEntityModel)]
 #[sea_orm(table_name = "config")]
 pub struct Model {
@@ -9,78 +11,75 @@ pub struct Model {
     pub user: String,
     pub bot: String,
     pub cookie: String,
+    /// Legacy compatibility column. Authentication refresh is intentionally unsupported.
     pub token_online: String,
+    /// Legacy compatibility column. Authentication refresh is intentionally unsupported.
     pub app_id: String,
-    // 是否启用定时任务
     pub enable_task: bool,
-    // 查询间隔(s, min = 60)
     pub interval: i64,
-    // 超时时间(s, min = 60)
     pub timeout: Option<i64>,
-    // 免费流量阈值(GB)
     pub free_threshold: Option<f64>,
-    // 非免费流量阈值(GB)
     pub nonfree_threshold: Option<f64>,
+    pub query_mode: String,
 }
 
 impl Display for Model {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // 带有注释，方便查看
-        writeln!(f, "Cookie: {}", self.cookie)?;
+        writeln!(f, "Cookie: {}", mask_secret(&self.cookie))?;
+        writeln!(f, "Query mode: {}", self.query_mode)?;
+        writeln!(
+            f,
+            "Task: {}",
+            if self.enable_task {
+                "running"
+            } else {
+                "stopped"
+            }
+        )?;
         writeln!(f, "Interval: {}s", self.interval)?;
-        if let Some(timeout) = self.timeout {
-            writeln!(f, "Timeout: {}s", timeout)?;
-        } else {
-            writeln!(f, "Timeout: None")?;
-        }
-        if let Some(free_threshold) = self.free_threshold {
-            writeln!(f, "Free threshold: {:.2} GB", free_threshold)?;
-        } else {
-            writeln!(f, "Free threshold: None")?;
-        }
-        if let Some(nonfree_threshold) = self.nonfree_threshold {
-            writeln!(f, "Nonfree threshold: {:.2} GB", nonfree_threshold)
-        } else {
-            writeln!(f, "Nonfree threshold: None")
-        }
+        writeln!(
+            f,
+            "Timeout: {}",
+            self.timeout
+                .map(|value| format!("{value}s"))
+                .unwrap_or_else(|| "None".into())
+        )?;
+        writeln!(
+            f,
+            "Free threshold: {}",
+            self.free_threshold
+                .map(|value| format!("{value:.3} GB"))
+                .unwrap_or_else(|| "None".into())
+        )?;
+        write!(
+            f,
+            "Normal threshold: {}",
+            self.nonfree_threshold
+                .map(|value| format!("{value:.3} GB"))
+                .unwrap_or_else(|| "None".into())
+        )
     }
 }
 
 impl Default for Model {
     fn default() -> Self {
         Self {
-            user: String::with_capacity(0),
+            user: String::new(),
+            bot: String::new(),
+            cookie: String::new(),
+            token_online: String::new(),
+            app_id: String::new(),
             enable_task: true,
-            interval: 60,
+            interval: 300,
             timeout: Some(1800),
-            cookie: String::with_capacity(0),
-            bot: String::with_capacity(0),
             free_threshold: None,
             nonfree_threshold: Some(0.05),
-            token_online: String::with_capacity(0),
-            app_id: String::with_capacity(0),
+            query_mode: "auto".into(),
         }
     }
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {
-    #[sea_orm(has_one = "super::last::Entity")]
-    Today,
-    #[sea_orm(has_one = "super::daily::Entity")]
-    Yesterday,
-}
-
-impl Related<super::last::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Today.def()
-    }
-}
-
-impl Related<super::daily::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Yesterday.def()
-    }
-}
+pub enum Relation {}
 
 impl ActiveModelBehavior for ActiveModel {}

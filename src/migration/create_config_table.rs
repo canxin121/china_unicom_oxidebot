@@ -26,8 +26,10 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Column::Timeout).integer().null())
                     .col(ColumnDef::new(Column::FreeThreshold).float().null())
                     .col(ColumnDef::new(Column::NonfreeThreshold).float().null())
-                    .col(ColumnDef::new(Column::TokenOnline).string().not_null())
-                    .col(ColumnDef::new(Column::AppId).string().not_null())
+                    // Legacy columns are retained for database compatibility. Version 0.2 never
+                    // reads or writes them after registration.
+                    .col(string(Column::TokenOnline).default(""))
+                    .col(string(Column::AppId).default(""))
                     .to_owned(),
             )
             .await

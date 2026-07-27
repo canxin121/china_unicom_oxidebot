@@ -1,233 +1,351 @@
-use anyhow::Result;
-use china_unicom_rs::{data::ChinaUnicomData, online::online, query::query_china_unicom_data};
-use chrono::TimeDelta;
+use std::sync::{Arc, OnceLock};
+
+use anyhow::{Context, Result};
+use china_unicom::client::{AuthResult, ChinaUnicomClient};
+use china_unicom::config::{AccountConfig, ParserConfig};
+use china_unicom::models::UsageSnapshot;
+use china_unicom::parser::UsageParser;
+use china_unicom::utils::{legacy_credential_cookie, modern_credential_cookie, parse_iso_datetime};
+use chrono::{Duration, Utc};
+use dashmap::DashMap;
 use sea_orm::{ActiveModelTrait, EntityTrait, Set};
-use tokio::{task::JoinHandle, time::sleep};
+use tokio::{sync::Mutex, task::JoinHandle, time::sleep};
 
 use crate::model::{
-    daily::build_daily_active, last::build_last_active, ConfigActiveModel, ConfigEntity,
-    ConfigModel, DailyActiveModel, DailyEntity, DailyModel, LastActiveModel, LastEntity, LastModel,
+    AccountActiveModel, AccountEntity, AccountModel, AccountStateActiveModel, AccountStateEntity,
+    AccountStateModel,
 };
+use crate::report::{build_report, same_china_day};
 
 use super::oxidebot_util::send_message;
 
-const FORMAT_LAST: &'static str = "[区间时长] 跳: [区间流量收费用量], 免: [区间流量免费用量]";
+static ACCOUNT_LOCKS: OnceLock<DashMap<String, Arc<Mutex<()>>>> = OnceLock::new();
 
-const FORMAT_DAILY: &'static str = "今跳:[区间流量收费用量], 今免: [区间流量免费用量]";
+fn account_lock(owner: &str, account_id: &str) -> Arc<Mutex<()>> {
+    ACCOUNT_LOCKS
+        .get_or_init(DashMap::new)
+        .entry(format!("{owner}\0{account_id}"))
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
 
-const FORMAT_LEFT: &'static str = "通用余: [流量通用余量], 定向余: [流量定向余量]";
+fn client_config(account: &AccountModel) -> AccountConfig {
+    AccountConfig {
+        id: account.account_id.clone(),
+        name: account.account_name.clone(),
+        app_id: account.app_id.clone(),
+        app_id_env: String::new(),
+        cookie: account.cookie.clone(),
+        cookie_env: String::new(),
+        token_online: account.token_online.clone(),
+        token_online_env: String::new(),
+        query_mode: account.query_mode.clone(),
+        token_refresh_interval_hours: account.refresh_interval_hours,
+    }
+}
 
-const FORMAT_USED: &'static str = "通用已用: [流量通用用量], 定向已用: [流量定向用量]";
+fn decode_snapshot(value: Option<&str>) -> Result<Option<UsageSnapshot>> {
+    value
+        .filter(|value| !value.trim().is_empty())
+        .map(serde_json::from_str)
+        .transpose()
+        .context("数据库中的流量快照已损坏")
+}
+
+async fn save_state(
+    db: &sea_orm::DatabaseConnection,
+    existing: Option<AccountStateModel>,
+    account: &AccountModel,
+    previous: &UsageSnapshot,
+    daily: &UsageSnapshot,
+) -> Result<()> {
+    let previous_snapshot = serde_json::to_string(previous)?;
+    let daily_snapshot = serde_json::to_string(daily)?;
+    if let Some(existing) = existing {
+        let mut active: AccountStateActiveModel = existing.into();
+        active.previous_snapshot = Set(Some(previous_snapshot));
+        active.daily_snapshot = Set(Some(daily_snapshot));
+        active.update(db).await?;
+    } else {
+        AccountStateEntity::insert(AccountStateActiveModel {
+            owner: Set(account.owner.clone()),
+            account_id: Set(account.account_id.clone()),
+            previous_snapshot: Set(Some(previous_snapshot)),
+            daily_snapshot: Set(Some(daily_snapshot)),
+        })
+        .exec(db)
+        .await?;
+    }
+    Ok(())
+}
+
+fn refresh_due(account: &AccountModel) -> bool {
+    if account.token_online.trim().is_empty() || account.refresh_interval_hours <= 0.0 {
+        return false;
+    }
+    let reference = account
+        .last_token_refresh_at
+        .as_deref()
+        .unwrap_or(&account.captured_at);
+    let Some(reference) = parse_iso_datetime(reference) else {
+        return true;
+    };
+    Utc::now() - reference >= Duration::seconds((account.refresh_interval_hours * 3600.0) as i64)
+}
+
+async fn persist_refreshed_credentials(
+    db: &sea_orm::DatabaseConnection,
+    account: &mut AccountModel,
+    refreshed: AuthResult,
+) -> Result<()> {
+    if !refreshed.token_online.is_empty() {
+        account.token_online = refreshed.token_online;
+    }
+    account.cookie = refreshed.cookie;
+    account.captured_at = refreshed.updated_at.clone();
+    account.last_token_refresh_at = Some(refreshed.updated_at);
+    let mut active: AccountActiveModel = account.clone().into();
+    active.token_online = Set(account.token_online.clone());
+    active.cookie = Set(account.cookie.clone());
+    active.captured_at = Set(account.captured_at.clone());
+    active.last_token_refresh_at = Set(account.last_token_refresh_at.clone());
+    active.update(db).await?;
+    Ok(())
+}
+
+async fn refresh_credentials(
+    db: &sea_orm::DatabaseConnection,
+    client: &ChinaUnicomClient,
+    account: &mut AccountModel,
+) -> Result<()> {
+    anyhow::ensure!(
+        !account.token_online.trim().is_empty(),
+        "该账号没有可续期的 token_online，请重新发送四字段登录 JSON"
+    );
+    let refreshed = client
+        .refresh_online(&account.token_online, &account.app_id, &account.cookie)
+        .await?;
+    persist_refreshed_credentials(db, account, refreshed).await
+}
 
 pub async fn query_once(
     db: &sea_orm::DatabaseConnection,
-    config: &ConfigModel,
-) -> anyhow::Result<(bool, String)> {
-    // when the cookie is expired, we need to update the cookie
-    let new_data = match query_china_unicom_data(&config.cookie).await {
-        Ok(data) => data,
-        Err(e) => {
-            let error_str = format!("{:?}", e);
-            if error_str.contains("999998") {
-                let new_config = handle_auth_update(config, db).await?;
-                tracing::info!("Update auth info for user: {}", new_config.user);
-                let data = query_china_unicom_data(&new_config.cookie).await?;
-                data
+    account: &mut AccountModel,
+) -> Result<(bool, String)> {
+    let lock = account_lock(&account.owner, &account.account_id);
+    let _guard = lock.lock().await;
+    *account = AccountEntity::find_by_id((account.owner.clone(), account.account_id.clone()))
+        .one(db)
+        .await?
+        .context("联通账号在查询前已被删除")?;
+    query_once_locked(db, account).await
+}
+
+async fn query_once_locked(
+    db: &sea_orm::DatabaseConnection,
+    account: &mut AccountModel,
+) -> Result<(bool, String)> {
+    let client = ChinaUnicomClient::new(client_config(account), 20.0, true, true)?;
+    let mut proactive_warning = None;
+    if refresh_due(account)
+        && let Err(error) = refresh_credentials(db, &client, account).await
+    {
+        tracing::warn!(
+            owner = %account.owner,
+            account = %account.account_id,
+            %error,
+            "联通凭据主动续期失败，继续尝试现有 Cookie"
+        );
+        proactive_warning = Some(format!("主动续期失败，已继续使用现有 Cookie：{error}"));
+    }
+
+    let query_result = match client
+        .query(&account.cookie, Some(&account.query_mode))
+        .await
+    {
+        Ok(result) => result,
+        Err(error) if error.is_cookie_invalid() => {
+            refresh_credentials(db, &client, account)
+                .await
+                .context("Cookie 已失效且自动续期失败，请重新发送四字段登录 JSON")?;
+            client
+                .query(&account.cookie, Some(&account.query_mode))
+                .await?
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let package_name = if query_result
+        .payload
+        .get("packageName")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .is_empty()
+    {
+        let selected_cookie = if query_result.query_mode.starts_with("modern") {
+            modern_credential_cookie(&account.cookie)
+        } else {
+            legacy_credential_cookie(&account.cookie)
+        };
+        match client
+            .query_package_name(if selected_cookie.is_empty() {
+                &account.cookie
             } else {
-                return Err(e);
+                &selected_cookie
+            })
+            .await
+        {
+            Ok(name) => name,
+            Err(error) => {
+                tracing::warn!(
+                    owner = %account.owner,
+                    account = %account.account_id,
+                    %error,
+                    "套餐名称查询失败，不影响流量结果"
+                );
+                String::new()
             }
         }
+    } else {
+        String::new()
     };
-
-    let daily_model = DailyEntity::find_by_id(config.user.as_str())
+    let mut current =
+        UsageParser::new(&ParserConfig::default())?.parse(&query_result.payload, &package_name);
+    if let Some(warning) = proactive_warning {
+        current.warnings.push(warning);
+    }
+    let state = AccountStateEntity::find_by_id((account.owner.clone(), account.account_id.clone()))
         .one(db)
         .await?;
-    let last_model = LastEntity::find_by_id(config.user.as_str()).one(db).await?;
-
-    let updated_last = handle_data_update(&new_data, &last_model, &daily_model, config, db).await?;
-
-    let message = build_message(&new_data, last_model, daily_model)?;
-
-    Ok((updated_last, message))
+    let previous = decode_snapshot(
+        state
+            .as_ref()
+            .and_then(|state| state.previous_snapshot.as_deref()),
+    )?;
+    let stored_daily = decode_snapshot(
+        state
+            .as_ref()
+            .and_then(|state| state.daily_snapshot.as_deref()),
+    )?;
+    let daily = stored_daily
+        .filter(|baseline| same_china_day(baseline, &current))
+        .unwrap_or_else(|| current.clone());
+    let report = build_report(
+        account,
+        &current,
+        previous.as_ref(),
+        Some(&daily),
+        &query_result.query_mode,
+    );
+    let next_previous = match previous.as_ref() {
+        Some(previous) if !report.should_notify => previous,
+        _ => &current,
+    };
+    save_state(db, state, account, next_previous, &daily).await?;
+    Ok((report.should_notify, report.message))
 }
 
-fn build_message(
-    new_data: &ChinaUnicomData,
-    last_model: Option<LastModel>,
-    daily_model: Option<DailyModel>,
-) -> Result<String> {
-    let mut message = format!("{}:\n", new_data.package_name);
-    match daily_model {
-        Some(daily_model) => match last_model {
-            Some(last_model) => {
-                message += &new_data.format_with_last(&FORMAT_LAST, &last_model.into())?;
-                message += "\n";
-                message += &new_data.format_with_last(&FORMAT_DAILY, &daily_model.into())?;
-                message += "\n";
-            }
-            None => {
-                message += &new_data.format(&FORMAT_LAST)?;
-                message += "\n";
-            }
-        },
-        None => match last_model {
-            Some(today_model) => {
-                message += &new_data.format_with_last(&FORMAT_LAST, &today_model.into())?;
-                message += "\n";
-            }
-            None => {}
-        },
-    }
-
-    message += &new_data.format(&FORMAT_USED)?;
-    message += "\n";
-    message += &new_data.format(&FORMAT_LEFT)?;
-    message += "\n";
-
-    Ok(message)
-}
-
-fn should_update_last(
-    config: &ConfigModel,
-    new_data: &ChinaUnicomData,
-    last_model: &Option<LastModel>,
-) -> bool {
-    if last_model.is_none() {
-        return true;
-    }
-    let last_model = last_model.as_ref().unwrap();
-    if let Some(timeout) = config.timeout {
-        if new_data.time - last_model.time > TimeDelta::seconds(timeout) {
-            return true;
-        }
-    }
-
-    if let Some(free_threshold) = config.free_threshold {
-        if new_data.free_flow_used - last_model.free_flow_used > free_threshold {
-            return true;
-        }
-    }
-
-    if let Some(nonfree_threshold) = config.nonfree_threshold {
-        if new_data.non_free_flow_used - last_model.non_free_flow_used > nonfree_threshold {
-            return true;
-        }
-    }
-
-    false
-}
-
-async fn handle_data_update(
-    new_data: &ChinaUnicomData,
-    last_model: &Option<LastModel>,
-    daily_model: &Option<DailyModel>,
-    config: &ConfigModel,
-    db: &sea_orm::DatabaseConnection,
-) -> anyhow::Result<bool> {
-    // handle daily data update
-    // when the new_data time not equal to the daily data time or the daily data is not exist
-    if daily_model.is_none()
-        || new_data.time.date_naive() != daily_model.as_ref().unwrap().time.date_naive()
-    {
-        // delete the old daily data
-        if daily_model.is_some() {
-            DailyEntity::delete_by_id(config.user.as_str())
-                .exec(db)
-                .await?;
-            tracing::info!("Delete old daily data for user: {}", config.user);
-        }
-        // insert the new daily data
-        match last_model {
-            Some(ref last_model) => {
-                // if the last model is exist, we can use the last model to create the new daily model
-                let new_daily_model: DailyModel = last_model.clone().into();
-
-                let new_daily_active: DailyActiveModel = new_daily_model.into();
-                DailyEntity::insert(new_daily_active).exec(db).await?;
-                tracing::info!(
-                    "Insert new daily data using last data for user: {}",
-                    config.user
-                );
-            }
-            None => {
-                // if the last model is not exist, we need to create a new daily model
-
-                let daily_data_active =
-                    build_daily_active(new_data.clone(), config.user.clone(), config.bot.clone());
-                DailyEntity::insert(daily_data_active).exec(db).await?;
-                tracing::info!(
-                    "Insert new daily data using new data for user: {}",
-                    config.user
-                );
-            }
-        }
-    }
-
-    // the judge of update last data is complex, so we need to extract it to a function
-    let should_update_today = should_update_last(config, new_data, &last_model);
-
-    if should_update_today {
-        if last_model.is_some() {
-            LastEntity::delete_by_id(config.user.as_str())
-                .exec(db)
-                .await?;
-            tracing::info!("Delete old last data for user: {}", config.user);
-        }
-
-        let new_last_active: LastActiveModel =
-            build_last_active(new_data.clone(), config.user.clone(), config.bot.clone());
-        LastEntity::insert(new_last_active).exec(db).await?;
-        tracing::info!("Insert new last data for user: {}", config.user);
-    }
-    Ok(should_update_today)
-}
-
-async fn handle_auth_update(
-    config: &ConfigModel,
-    db: &sea_orm::DatabaseConnection,
-) -> Result<ConfigModel> {
-    let resp = online(&config.token_online, &config.app_id).await?;
-    let mut config_active: ConfigActiveModel = config.clone().into();
-    config_active.token_online = Set(resp.online_token);
-    config_active.cookie = Set(resp.cookie);
-    let new_config = config_active.update(db).await?;
-    Ok(new_config)
-}
-
-pub async fn create_china_unicom_task<DB: Into<sea_orm::DatabaseConnection>>(
-    db: DB,
-    user: String,
-) -> anyhow::Result<JoinHandle<()>> {
-    let db = db.into();
-
-    let config = ConfigEntity::find_by_id(&user)
+pub async fn create_china_unicom_task(
+    db: sea_orm::DatabaseConnection,
+    owner: String,
+    account_id: String,
+) -> Result<JoinHandle<()>> {
+    let mut account = AccountEntity::find_by_id((owner.clone(), account_id.clone()))
         .one(&db)
         .await?
-        .ok_or(anyhow::anyhow!("User {} not found in config", user))?;
+        .with_context(|| format!("联通账号 {account_id} 不存在"))?;
+    anyhow::ensure!(account.enable_task, "定时任务未启用");
+    anyhow::ensure!(account.interval >= 60, "查询间隔不能少于 60 秒");
 
-    let (shoudl_send, message) = query_once(&db, &config).await?;
-
-    if shoudl_send {
-        send_message(&user, &config.bot, message).await?;
-    }
-
-    let handle = tokio::spawn(async move {
-        let interval = std::time::Duration::from_secs(config.interval as u64);
+    Ok(tokio::spawn(async move {
+        let interval = std::time::Duration::from_secs(account.interval as u64);
+        let mut last_error = None::<String>;
         loop {
-            sleep(interval).await;
-            match query_once(&db, &config).await {
+            match query_once(&db, &mut account).await {
                 Ok((should_send, message)) => {
-                    if should_send {
-                        if let Err(e) = send_message(&user, &config.bot, message).await {
-                            tracing::error!("Error when send message to user: {}", e);
-                        }
+                    last_error = None;
+                    if should_send
+                        && let Err(error) = send_message(&owner, &account.bot, message).await
+                    {
+                        tracing::error!(%owner, account = %account.account_id, %error, "发送联通流量通知失败");
                     }
                 }
-                Err(e) => {
-                    tracing::error!("Error when query china unicom data: {}", e);
+                Err(error) => {
+                    let error = error.to_string();
+                    tracing::error!(%owner, account = %account.account_id, %error, "查询联通流量失败");
+                    if last_error.as_deref() != Some(error.as_str()) {
+                        let message = format!(
+                            "联通账号 {} ({}) 查询失败：{error}\n如果登录包已失效，请使用 /china_unicom account login {} 重新发送四字段 JSON。",
+                            account.account_name, account.account_id, account.account_id
+                        );
+                        if let Err(send_error) = send_message(&owner, &account.bot, message).await {
+                            tracing::error!(%owner, account = %account.account_id, %send_error, "发送联通查询错误通知失败");
+                        }
+                        last_error = Some(error);
+                    }
                 }
             }
+            sleep(interval).await;
         }
-    });
-    Ok(handle)
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::{account_lock, client_config, refresh_due};
+    use crate::model::AccountModel;
+
+    fn account() -> AccountModel {
+        AccountModel {
+            owner: "telegram:1".into(),
+            account_id: "main".into(),
+            bot: "telegram:2".into(),
+            account_name: "主卡".into(),
+            token_online: "refresh".into(),
+            app_id: "app".into(),
+            cookie: "JUT=jwt; ecs_token=one; ecs_acc=two".into(),
+            captured_at: "2020-01-01T00:00:00Z".into(),
+            last_token_refresh_at: None,
+            enable_task: true,
+            interval: 300,
+            timeout: Some(1800),
+            free_threshold: None,
+            nonfree_threshold: Some(0.05),
+            query_mode: "auto".into(),
+            refresh_interval_hours: 12.0,
+        }
+    }
+
+    #[test]
+    fn account_credentials_feed_upstream_client_and_refresh_schedule() {
+        let mut account = account();
+        let upstream = client_config(&account);
+        assert_eq!(upstream.id, "main");
+        assert_eq!(upstream.resolved_token_online(), "refresh");
+        assert_eq!(upstream.resolved_app_id(), "app");
+        assert_eq!(
+            upstream.resolved_cookie(),
+            "JUT=jwt; ecs_token=one; ecs_acc=two"
+        );
+        assert!(refresh_due(&account));
+
+        account.token_online.clear();
+        assert!(!refresh_due(&account));
+        account.token_online = "refresh".into();
+        account.refresh_interval_hours = 0.0;
+        assert!(!refresh_due(&account));
+        account.refresh_interval_hours = 12.0;
+        account.last_token_refresh_at = Some("2999-01-01T00:00:00Z".into());
+        assert!(!refresh_due(&account));
+    }
+
+    #[test]
+    fn query_locks_are_shared_per_account_but_not_across_accounts() {
+        let first = account_lock("owner", "main");
+        let same = account_lock("owner", "main");
+        let other = account_lock("owner", "backup");
+        assert!(Arc::ptr_eq(&first, &same));
+        assert!(!Arc::ptr_eq(&first, &other));
+    }
 }
