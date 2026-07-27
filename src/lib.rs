@@ -7,8 +7,8 @@ use clap::Parser;
 use dashmap::DashMap;
 use model::{AccountActiveModel, AccountEntity, AccountModel, AccountStateEntity};
 use oxidebot::{
-    EasyBool, EventHandlerTrait, handler::Handler, manager::BroadcastSender, matcher::Matcher,
-    source::message::MessageSegment, wait_user_text_generic,
+    EasyBool, EventHandlerTrait, event::Event, handler::Handler, manager::BroadcastSender,
+    matcher::Matcher, source::message::MessageSegment, wait_user_text_generic,
 };
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set};
 use tokio::task::JoinHandle;
@@ -28,6 +28,13 @@ pub mod report;
 pub mod utils;
 
 const INPUT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// The Telegram adapter emits a command interaction in addition to the
+/// underlying message. Text commands must run only for that canonical message
+/// event; otherwise one incoming command would be dispatched twice.
+fn is_command_message_event(event: &Event) -> bool {
+    matches!(event, Event::MessageEvent(_))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AccountKey {
@@ -707,6 +714,9 @@ impl ChinaUnicomHandler {
 #[async_trait]
 impl EventHandlerTrait for ChinaUnicomHandler {
     async fn handle(&self, matcher: Matcher) -> Result<()> {
+        if !is_command_message_event(matcher.event.as_ref()) {
+            return Ok(());
+        }
         let Some(message) = matcher.try_get_message() else {
             return Ok(());
         };
@@ -742,7 +752,42 @@ impl EventHandlerTrait for ChinaUnicomHandler {
 
 #[cfg(test)]
 mod tests {
-    use super::ChinaUnicomHandler;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use oxidebot::{
+        event::{Event, MessageEvent},
+        interaction::{InteractionEvent, InteractionKind},
+        source::user::User,
+    };
+
+    use super::{ChinaUnicomHandler, is_command_message_event};
+
+    fn command_interaction_event() -> Event {
+        Event::InteractionEvent(InteractionEvent {
+            id: "message-1:command".to_owned(),
+            kind: InteractionKind::Command,
+            action_id: Some("china_unicom".to_owned()),
+            values: Vec::new(),
+            user: User::default(),
+            group: None,
+            message: None,
+            context_id: None,
+            response: None,
+            fields: BTreeMap::new(),
+            command: None,
+            locale: None,
+            permissions: BTreeSet::new(),
+            data: serde_json::Value::Null,
+        })
+    }
+
+    #[test]
+    fn command_handler_ignores_the_duplicate_command_interaction() {
+        assert!(is_command_message_event(&Event::MessageEvent(
+            MessageEvent::default()
+        )));
+        assert!(!is_command_message_event(&command_interaction_event()));
+    }
 
     #[test]
     fn login_requires_exact_four_field_json() {
