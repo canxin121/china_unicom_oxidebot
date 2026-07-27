@@ -528,7 +528,7 @@ dependencies = [
 [[package]]
 name = "china-unicom-rs"
 version = "1.0.0"
-source = "git+https://github.com/canxin121/china-unicom-rs#33fde99fbdee5ca682780c63a8711d7626fb4dd9"
+source = "git+https://github.com/canxin121/china-unicom-rs#b73991d6108567f15b84e48e90a80d18da593ce0"
 dependencies = [
  "base64 0.23.0",
  "chrono",
@@ -553,6 +553,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "urlencoding",
+ "webpki-root-certs",
 ]
 
 [[package]]
@@ -3539,7 +3540,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
