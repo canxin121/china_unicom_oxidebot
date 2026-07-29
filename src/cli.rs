@@ -1,111 +1,122 @@
-use clap::{Parser, Subcommand};
+//! Typed `/china_unicom` command grammar.
 
-#[derive(Subcommand)]
-pub enum AccountCommand {
-    /// Add an account and import its canonical four-field login JSON
-    Add {
-        /// Stable account identifier (letters, digits, `_` and `-`)
-        account_id: String,
-        /// Friendly display name; defaults to account_id
-        #[arg(long)]
-        name: Option<String>,
-    },
-    /// Replace an account's credentials with a new four-field login JSON
-    Login { account_id: String },
-    /// List all China Unicom accounts owned by this bot user
-    List,
-    /// Remove one account and its usage history
-    Remove { account_id: String },
+use oxidebot::prelude::{BotCommand, CommandArgs};
+
+/// Adds one China Unicom account.
+#[derive(Debug, CommandArgs)]
+pub struct AccountAddArgs {
+    /// Stable account identifier made of letters, digits, `_`, and `-`.
+    pub account_id: String,
+    /// Optional friendly display name. Defaults to `account_id`.
+    #[arg(long)]
+    pub name: Option<String>,
 }
 
-#[derive(Subcommand)]
-pub enum TaskCommand {
-    /// Start one account, or every account when account_id is omitted
-    Start { account_id: Option<String> },
-    /// Stop one account, or every account when account_id is omitted
-    Stop { account_id: Option<String> },
-    /// Show one account, or every account when account_id is omitted
-    Status { account_id: Option<String> },
+/// Selects one account by its stable identifier.
+#[derive(Debug, CommandArgs)]
+pub struct AccountIdArgs {
+    /// Stable account identifier.
+    pub account_id: String,
 }
 
-#[derive(Subcommand)]
-pub enum ConfigCommand {
-    /// Show one account, or every account when account_id is omitted
-    Show { account_id: Option<String> },
-    /// Interactively change one account
-    Set { account_id: String },
+/// Selects zero or one account. Omitting it selects all accounts owned by the user.
+#[derive(Debug, CommandArgs)]
+pub struct OptionalAccountIdArgs {
+    /// Optional stable account identifier.
+    pub account_id: Option<String>,
 }
 
-#[derive(Subcommand)]
-pub enum Commands {
-    /// Add, log in, list, or remove China Unicom accounts
-    #[command(short_flag = 'a')]
-    Account {
-        #[command(subcommand)]
-        account_command: AccountCommand,
-    },
-    /// Query one account, or every account when account_id is omitted
-    #[command(short_flag = 'q')]
-    Query { account_id: Option<String> },
-    /// Show or change per-account configuration
-    #[command(short_flag = 'c')]
-    Config {
-        #[command(subcommand)]
-        config_command: ConfigCommand,
-    },
-    /// Check or control per-account scheduled tasks
-    #[command(short_flag = 't')]
-    Task {
-        #[command(subcommand)]
-        task_command: TaskCommand,
-    },
-}
-
-#[derive(Parser)]
+/// Account lifecycle commands.
+#[derive(Debug, BotCommand)]
 #[command(
-    name = "/china_unicom",
-    version = env!("CARGO_PKG_VERSION"),
-    author = "canxin121",
-    about = "Manage multiple China Unicom accounts using canonical four-field login JSON."
+    name = "account",
+    description = "Add, update, list, or remove China Unicom accounts"
 )]
-pub struct Cli {
-    #[command(subcommand)]
-    pub command: Commands,
+pub enum AccountCommand {
+    /// Add an account and import its canonical four-field login JSON.
+    Add(AccountAddArgs),
+    /// Replace an account's credentials with a new four-field login JSON.
+    Login(AccountIdArgs),
+    /// List every China Unicom account owned by this bot user.
+    List,
+    /// Remove one account and its usage history.
+    Remove(AccountIdArgs),
 }
 
-impl Cli {
-    pub fn name() -> &'static str {
-        "/china_unicom"
-    }
+/// Scheduled-query task commands.
+#[derive(Debug, BotCommand)]
+#[command(
+    name = "task",
+    description = "Check or control scheduled China Unicom queries"
+)]
+pub enum TaskCommand {
+    /// Start one account, or every account when account_id is omitted.
+    Start(OptionalAccountIdArgs),
+    /// Stop one account, or every account when account_id is omitted.
+    Stop(OptionalAccountIdArgs),
+    /// Show one account, or every account when account_id is omitted.
+    Status(OptionalAccountIdArgs),
+}
+
+/// Per-account configuration commands.
+#[derive(Debug, BotCommand)]
+#[command(
+    name = "config",
+    description = "Show or change per-account configuration"
+)]
+pub enum ConfigCommand {
+    /// Show one account, or every account when account_id is omitted.
+    Show(OptionalAccountIdArgs),
+    /// Interactively change one account.
+    Set(AccountIdArgs),
+}
+
+/// The complete China Unicom command tree.
+#[derive(Debug, BotCommand)]
+#[command(
+    name = "china_unicom",
+    description = "Manage China Unicom accounts with canonical four-field login JSON"
+)]
+pub enum ChinaUnicomCommand {
+    /// Add, update, list, or remove accounts.
+    #[command(subcommand)]
+    Account(AccountCommand),
+    /// Query one account, or every account when account_id is omitted.
+    Query(OptionalAccountIdArgs),
+    /// Show or change per-account configuration.
+    #[command(subcommand)]
+    Config(ConfigCommand),
+    /// Check or control scheduled query tasks.
+    #[command(subcommand)]
+    Task(TaskCommand),
 }
 
 #[cfg(test)]
 mod tests {
-    use clap::Parser;
+    use oxidebot::commands::{CommandTree, FromCommandMatch};
 
-    use super::{AccountCommand, Cli, Commands, TaskCommand};
+    use super::{AccountCommand, ChinaUnicomCommand};
 
     #[test]
-    fn parses_multi_account_commands() {
-        let cli =
-            Cli::try_parse_from(["/china_unicom", "account", "add", "main", "--name", "主卡"])
-                .unwrap();
+    fn parses_the_existing_multi_account_command_surface() {
+        let command = ChinaUnicomCommand::command();
+        let parsed = command
+            .parse_message(&oxidebot::Message::text(
+                "/china_unicom account add main --name 主卡",
+            ))
+            .expect("account add command parses");
         assert!(matches!(
-            cli.command,
-            Commands::Account {
-                account_command: AccountCommand::Add { account_id, name }
-            } if account_id == "main" && name.as_deref() == Some("主卡")
+            ChinaUnicomCommand::from_match(&parsed),
+            Ok(ChinaUnicomCommand::Account(AccountCommand::Add(args)))
+                if args.account_id == "main" && args.name.as_deref() == Some("主卡")
         ));
 
-        let cli = Cli::try_parse_from(["/china_unicom", "query"]).unwrap();
-        assert!(matches!(cli.command, Commands::Query { account_id: None }));
-
-        let cli = Cli::try_parse_from(["/china_unicom", "task", "status", "backup"]).unwrap();
+        let parsed = command
+            .parse_message(&oxidebot::Message::text("/china_unicom query"))
+            .expect("query command parses");
         assert!(matches!(
-            cli.command,
-            Commands::Task {
-                task_command: TaskCommand::Status { account_id: Some(id) }
-            } if id == "backup"
+            ChinaUnicomCommand::from_match(&parsed),
+            Ok(ChinaUnicomCommand::Query(args)) if args.account_id.is_none()
         ));
     }
 }

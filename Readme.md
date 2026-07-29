@@ -1,6 +1,6 @@
 # China Unicom OxideBot
 
-为 OxideBot 提供中国联通多账号流量查询、凭据续期和阈值通知。版本 0.3 直接依赖 [`canxin121/china-unicom-rs`](https://github.com/canxin121/china-unicom-rs)，不再在本仓库复制联通 HTTP、Cookie 规范化、流量包解析或分类代码。
+为 OxideBot 1.0 提供中国联通多账号流量查询、凭据续期和阈值通知。插件直接依赖 [`canxin121/china-unicom-rs`](https://github.com/canxin121/china-unicom-rs)，不在本仓库复制联通 HTTP、Cookie 规范化、流量包解析或分类代码。
 
 ## 工作方式
 
@@ -84,35 +84,39 @@ Bot 要求 JSON 恰好包含这四个字段，并验证 `captured_at` 为 RFC 33
 
 ```rust
 use anyhow::Context;
-use china_unicom_oxidebot::ChinaUnicomHandler;
-use telegram_bot_oxidebot::bot::TelegramBot;
+use china_unicom_oxidebot::ChinaUnicomPlugin;
+use oxidebot::prelude::*;
+use oxidebot_adapter_telegram::TelegramAdapter;
+
+#[derive(BotState)]
+struct AppState {
+    #[state]
+    china_unicom: ChinaUnicomPlugin,
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let token = std::env::var("TELEGRAM_BOT_TOKEN")
         .context("TELEGRAM_BOT_TOKEN is not set")?;
-    let telegram = TelegramBot::try_new(token, Default::default()).await?;
+    let bot_id = std::env::var("TELEGRAM_BOT_ID")
+        .context("TELEGRAM_BOT_ID is not set")?;
+    let china_unicom = ChinaUnicomPlugin::open().await?;
 
-    oxidebot::OxideBotManager::new()
-        .bot(telegram)
-        .await
-        .wait_handler(|sender| {
-            Box::pin(async move {
-                ChinaUnicomHandler::try_new(sender)
-                    .await
-                    .expect("failed to initialize China Unicom handler")
-            })
-        })
-        .await
-        .run_block()
-        .await
+    OxideBot::with_state(AppState {
+        china_unicom: china_unicom.clone(),
+    })
+        .adapter(TelegramAdapter::new(token, bot_id)?)
+        .plugin(china_unicom.bundle::<AppState>())
+        .run()
+        .await?;
+    Ok(())
 }
 ```
 
 仓库提供相同代码的可编译示例：
 
 ```bash
-TELEGRAM_BOT_TOKEN='你的 Bot Token' cargo run --example telegram
+TELEGRAM_BOT_TOKEN='你的 Bot Token' TELEGRAM_BOT_ID='Telegram 数字 Bot ID' cargo run --example telegram
 ```
 
 ## 数据与安全
@@ -130,7 +134,8 @@ TELEGRAM_BOT_TOKEN='你的 Bot Token' cargo run --example telegram
 
 ## 从旧版本升级
 
-启动 0.3 时自动创建 `unicom_account` 和 `unicom_account_state`：
+启动本版本时，既有的数据库迁移仍会创建或升级
+`unicom_account` 和 `unicom_account_state`：
 
 - 0.2 及更早版本的单账号配置会迁移为账号 ID `default`；
 - 原 Cookie、`token_online`、`app_id`、阈值、查询间隔、任务状态和快照都会保留；
@@ -143,15 +148,21 @@ TELEGRAM_BOT_TOKEN='你的 Bot Token' cargo run --example telegram
 /china_unicom account login default
 ```
 
+从 OxideBot 0.1 升级到本插件版本还需要更新应用装配代码：旧版
+`OxideBotManager`、`ChinaUnicomHandler` 和 `telegram_bot_oxidebot` 已被移除；请使用上文的
+`ChinaUnicomPlugin::open()`、`ChinaUnicomPlugin::bundle()` 和官方
+`oxidebot-adapter-telegram`。账号的 `platform_identifier` 所有者键和保存的 bot 标识保持原样，
+因此现有账号、凭据和快照不需要重新导入。`TELEGRAM_BOT_ID` 必须使用稳定的 Telegram 数字 bot ID，
+以便后台通知精确选择保存账号时对应的 bot；这也支持同一平台上的多个 bot。
+
 ## 依赖
 
-- Rust 1.97+
+- Rust 1.97+（由 `china-unicom-rs` 与当前 SeaORM / SQLx 依赖链要求；并非 OxideBot 1.0 的 MSRV 限制）
 - `china-unicom-rs` 1.0.0，直接 Git 依赖并由 `Cargo.lock` 固定提交
-- `oxidebot` 0.1.8
-- `telegram_bot_oxidebot` 0.1.4
+- `oxidebot` 1.0.0-alpha.1（固定到已验证的 OxideBot Git revision）
+- `oxidebot-adapter-telegram` 1.0.0-alpha.1（仅供 Telegram 示例使用）
 - Tokio 1.53.1
 - SeaORM / SeaORM Migration 2.0.0
-- Clap 4.6.4
 
 由于 `china-unicom-rs` 当前只发布在 GitHub、尚未发布到 crates.io，本项目设置为 `publish = false`；请从 Git 仓库构建或作为 Git 依赖使用。
 

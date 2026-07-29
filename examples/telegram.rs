@@ -1,23 +1,27 @@
-use anyhow::Context;
-use china_unicom_oxidebot::ChinaUnicomHandler;
-use telegram_bot_oxidebot::bot::TelegramBot;
+use anyhow::Context as _;
+use china_unicom_oxidebot::ChinaUnicomPlugin;
+use oxidebot::prelude::*;
+use oxidebot_adapter_telegram::TelegramAdapter;
+
+#[derive(BotState)]
+struct AppState {
+    #[state]
+    china_unicom: ChinaUnicomPlugin,
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let token = std::env::var("TELEGRAM_BOT_TOKEN").context("TELEGRAM_BOT_TOKEN is not set")?;
-    let telegram = TelegramBot::try_new(token, Default::default()).await?;
+    let bot_id = std::env::var("TELEGRAM_BOT_ID")
+        .context("TELEGRAM_BOT_ID is not set (use Telegram's stable numeric bot ID)")?;
+    let china_unicom = ChinaUnicomPlugin::open().await?;
 
-    oxidebot::OxideBotManager::new()
-        .bot(telegram)
-        .await
-        .wait_handler(|sender| {
-            Box::pin(async move {
-                ChinaUnicomHandler::try_new(sender)
-                    .await
-                    .expect("failed to initialize China Unicom handler")
-            })
-        })
-        .await
-        .run_block()
-        .await
+    OxideBot::with_state(AppState {
+        china_unicom: china_unicom.clone(),
+    })
+    .adapter(TelegramAdapter::new(token, bot_id)?)
+    .plugin(china_unicom.bundle::<AppState>())
+    .run()
+    .await?;
+    Ok(())
 }

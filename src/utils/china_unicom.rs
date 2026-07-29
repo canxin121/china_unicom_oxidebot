@@ -11,6 +11,8 @@ use dashmap::DashMap;
 use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use tokio::{sync::Mutex, task::JoinHandle, time::sleep};
 
+use oxidebot::delivery::BotDirectory;
+
 use crate::model::{
     AccountActiveModel, AccountEntity, AccountModel, AccountStateActiveModel, AccountStateEntity,
     AccountStateModel,
@@ -246,6 +248,7 @@ async fn query_once_locked(
 
 pub async fn create_china_unicom_task(
     db: sea_orm::DatabaseConnection,
+    bots: BotDirectory,
     owner: String,
     account_id: String,
 ) -> Result<JoinHandle<()>> {
@@ -264,7 +267,7 @@ pub async fn create_china_unicom_task(
                 Ok((should_send, message)) => {
                     last_error = None;
                     if should_send
-                        && let Err(error) = send_message(&owner, &account.bot, message).await
+                        && let Err(error) = send_message(&bots, &owner, &account.bot, message).await
                     {
                         tracing::error!(%owner, account = %account.account_id, %error, "发送联通流量通知失败");
                     }
@@ -277,7 +280,9 @@ pub async fn create_china_unicom_task(
                             "联通账号 {} ({}) 查询失败：{error}\n如果登录包已失效，请使用 /china_unicom account login {} 重新发送四字段 JSON。",
                             account.account_name, account.account_id, account.account_id
                         );
-                        if let Err(send_error) = send_message(&owner, &account.bot, message).await {
+                        if let Err(send_error) =
+                            send_message(&bots, &owner, &account.bot, message).await
+                        {
                             tracing::error!(%owner, account = %account.account_id, %send_error, "发送联通查询错误通知失败");
                         }
                         last_error = Some(error);
