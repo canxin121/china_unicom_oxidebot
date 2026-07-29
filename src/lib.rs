@@ -141,8 +141,8 @@ impl ChinaUnicomPlugin {
         self.tasks.clear();
     }
 
-    async fn send_message(&self, messenger: &Messenger, text: impl Into<String>) -> Result<()> {
-        messenger.send(text.into()).await?;
+    async fn send_message(&self, messenger: &Messenger, message: impl Into<Message>) -> Result<()> {
+        messenger.send(message.into()).await?;
         Ok(())
     }
 

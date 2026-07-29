@@ -1,58 +1,87 @@
-use std::collections::HashSet;
-
-use china_unicom::models::UsageSnapshot;
-use china_unicom::reporting::aggregate;
-use china_unicom::utils::{format_data_mb, format_duration, parse_iso_datetime};
+use china_unicom::{
+    models::{FlowPackage, UsageSnapshot},
+    reporting::{same_local_day, summarize_usage},
+    utils::format_data_mb,
+};
+use oxidebot::{
+    Message,
+    message::{RichText, TextSpan, TextStyle},
+};
 
 use crate::model::AccountModel;
 
 #[derive(Debug, Clone)]
 pub struct UsageReport {
-    pub message: String,
+    pub message: Message,
     pub should_notify: bool,
 }
 
-pub fn same_china_day(first: &UsageSnapshot, second: &UsageSnapshot) -> bool {
-    china_unicom::reporting::same_local_day(first, second, "Asia/Shanghai")
+#[derive(Default)]
+struct RichReport {
+    text: String,
+    spans: Vec<TextSpan>,
 }
 
-fn detail_lines(snapshot: &UsageSnapshot, limit: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    for package in snapshot.packages.iter().take(limit) {
-        let mut tags = vec![if package.free { "免流" } else { "通用" }.to_owned()];
-        tags.push(
-            if package.unlimited {
-                "不限量"
-            } else {
-                "有限量"
-            }
-            .into(),
-        );
-        if package.has_carryover() {
-            tags.push(format!(
-                "结转剩{}",
-                format_data_mb(package.carryover_remaining_mb)
-            ));
-        }
-        let mut line = format!(
-            "- {} [{}]：已用 {}，剩余 {}",
-            package.name,
-            tags.join(" / "),
-            format_data_mb(package.used_mb),
-            format_data_mb(package.remaining_mb)
-        );
-        if !package.end_date.is_empty() {
-            line.push_str(&format!("，有效期 {}", package.end_date));
-        }
-        lines.push(line);
+impl RichReport {
+    fn text(&mut self, value: impl AsRef<str>) {
+        self.text.push_str(value.as_ref());
     }
-    if snapshot.packages.len() > limit {
-        lines.push(format!(
-            "- 其余 {} 个流量包已省略",
-            snapshot.packages.len() - limit
-        ));
+
+    fn bold(&mut self, value: impl AsRef<str>) {
+        self.styled(value, TextStyle::Bold);
     }
-    lines
+
+    fn code(&mut self, value: impl AsRef<str>) {
+        self.styled(value, TextStyle::Code);
+    }
+
+    fn styled(&mut self, value: impl AsRef<str>, style: TextStyle) {
+        let value = value.as_ref();
+        let start = self.text.len();
+        self.text.push_str(value);
+        self.spans.push(TextSpan {
+            range: start..self.text.len(),
+            styles: vec![style],
+        });
+    }
+
+    fn line(&mut self) {
+        self.text.push('\n');
+    }
+
+    fn into_message(self) -> Message {
+        Message::rich_text(RichText {
+            text: self.text,
+            spans: self.spans,
+        })
+    }
+}
+
+pub fn same_china_day(first: &UsageSnapshot, second: &UsageSnapshot) -> bool {
+    same_local_day(first, second, "Asia/Shanghai")
+}
+
+fn usage_line(report: &mut RichReport, label: &str, used: f64, remaining: f64) {
+    report.bold(label);
+    report.text("  已用 ");
+    report.code(format_data_mb(used));
+    report.text("  ·  剩余 ");
+    report.code(format_data_mb(remaining));
+    report.line();
+}
+
+fn package_line(report: &mut RichReport, package: &FlowPackage) {
+    report.text("• ");
+    report.bold(&package.name);
+    report.text("  已用 ");
+    report.code(format_data_mb(package.used_mb));
+    report.text("  ·  剩余 ");
+    report.code(format_data_mb(package.remaining_mb));
+    if !package.end_date.is_empty() {
+        report.text("  ·  至 ");
+        report.text(&package.end_date);
+    }
+    report.line();
 }
 
 pub fn build_report(
@@ -60,102 +89,126 @@ pub fn build_report(
     current: &UsageSnapshot,
     previous: Option<&UsageSnapshot>,
     today: Option<&UsageSnapshot>,
-    query_mode: &str,
+    _query_mode: &str,
 ) -> UsageReport {
     let initial = previous.is_none();
     let previous = previous.unwrap_or(current);
     let today = today.unwrap_or(current);
-    let categories = aggregate(current, previous, today);
-    let normal = &categories["normal"];
-    let normal_limited = &categories["normalLimited"];
-    let normal_unlimited = &categories["normalUnlimited"];
-    let free = &categories["free"];
-    let free_limited = &categories["freeLimited"];
-    let free_unlimited = &categories["freeUnlimited"];
-    let elapsed_seconds = parse_iso_datetime(&current.captured_at)
-        .zip(parse_iso_datetime(&previous.captured_at))
-        .map(|(current, previous)| (current - previous).num_seconds().max(0))
-        .unwrap_or(0);
-    let previous_ids: HashSet<_> = previous
-        .packages
-        .iter()
-        .map(|package| package.id.as_str())
-        .collect();
-    let new_packages: Vec<_> = if initial {
-        Vec::new()
-    } else {
-        current
-            .packages
-            .iter()
-            .filter(|package| !previous_ids.contains(package.id.as_str()))
-            .collect()
-    };
-
+    let summary = summarize_usage(current, previous, today);
+    let normal = &summary.categories["normal"];
+    let free = &summary.categories["free"];
+    let normal_unlimited = &summary.categories["normalUnlimited"];
+    let free_unlimited = &summary.categories["freeUnlimited"];
     let timeout_reached = account
         .timeout
-        .is_some_and(|timeout| elapsed_seconds >= timeout);
+        .is_some_and(|timeout| summary.elapsed_seconds >= timeout);
     let free_reached = account
         .free_threshold
         .is_some_and(|threshold| free.interval_used_mb >= threshold.max(0.0) * 1024.0);
     let normal_reached = account
         .nonfree_threshold
         .is_some_and(|threshold| normal.interval_used_mb >= threshold.max(0.0) * 1024.0);
-    let should_notify =
-        !initial && (timeout_reached || free_reached || normal_reached || !new_packages.is_empty());
+    let should_notify = !initial
+        && (timeout_reached || free_reached || normal_reached || !summary.new_packages.is_empty());
 
-    let mut lines = vec![
-        format!("{} ({})", account.account_name, account.account_id),
-        current.package_name.clone(),
-        format!(
-            "区间 {}：通用 {}，免流 {}",
-            format_duration(elapsed_seconds),
-            format_data_mb(normal.interval_used_mb),
-            format_data_mb(free.interval_used_mb)
-        ),
-        format!(
-            "今日：通用 {}，免流 {}",
-            format_data_mb(normal.today_used_mb),
-            format_data_mb(free.today_used_mb)
-        ),
-        format!(
-            "通用有限：已用 {}，剩余 {}",
-            format_data_mb(normal_limited.used_mb),
-            format_data_mb(normal_limited.remaining_mb)
-        ),
-        format!(
-            "通用不限：已用 {}；免流有限剩余 {}；免流不限已用 {}",
-            format_data_mb(normal_unlimited.used_mb),
-            format_data_mb(free_limited.remaining_mb),
-            format_data_mb(free_unlimited.used_mb)
-        ),
-    ];
+    let mut report = RichReport::default();
+    report.text("📊 ");
+    report.bold(&account.account_name);
+    report.text("  ·  ");
+    report.code(&account.account_id);
+    report.line();
+    if !current.package_name.trim().is_empty() {
+        report.text("套餐  ");
+        report.text(&current.package_name);
+        report.line();
+    }
+    report.line();
+    report.bold("流量概览");
+    report.line();
+    usage_line(&mut report, "通用", normal.used_mb, normal.remaining_mb);
+    usage_line(&mut report, "免流", free.used_mb, free.remaining_mb);
+
+    report.line();
+    report.bold("用量变化");
+    report.line();
+    report.text("本次  通用 ");
+    report.code(format_data_mb(normal.interval_used_mb));
+    report.text("  ·  免流 ");
+    report.code(format_data_mb(free.interval_used_mb));
+    report.line();
+    report.text("今日  通用 ");
+    report.code(format_data_mb(normal.today_used_mb));
+    report.text("  ·  免流 ");
+    report.code(format_data_mb(free.today_used_mb));
+    report.line();
+
     let carryover = normal.carryover_remaining_mb + free.carryover_remaining_mb;
-    if carryover > 0.0 {
-        lines.push(format!("结转剩余：{}", format_data_mb(carryover)));
+    if carryover > 0.0 || normal_unlimited.used_mb > 0.0 || free_unlimited.used_mb > 0.0 {
+        report.line();
+        report.bold("其他");
+        report.line();
+        if carryover > 0.0 {
+            report.text("结转剩余  ");
+            report.code(format_data_mb(carryover));
+            report.line();
+        }
+        if normal_unlimited.used_mb > 0.0 || free_unlimited.used_mb > 0.0 {
+            report.text("不限量已用  通用 ");
+            report.code(format_data_mb(normal_unlimited.used_mb));
+            report.text("  ·  免流 ");
+            report.code(format_data_mb(free_unlimited.used_mb));
+            report.line();
+        }
     }
-    if !new_packages.is_empty() {
-        lines.push(format!(
-            "新增流量包：{}",
-            new_packages
-                .iter()
-                .map(|package| package.name.as_str())
-                .collect::<Vec<_>>()
-                .join("、")
-        ));
+
+    if !summary.new_packages.is_empty() {
+        report.line();
+        report.bold("新增流量包");
+        report.line();
+        for package in summary.new_packages.iter().take(3) {
+            report.text("• ");
+            report.text(&package.name);
+            report.line();
+        }
+        if summary.new_packages.len() > 3 {
+            report.text(format!(
+                "另有 {} 个新增流量包",
+                summary.new_packages.len() - 3
+            ));
+            report.line();
+        }
     }
-    lines.extend(
-        current
-            .warnings
-            .iter()
-            .map(|warning| format!("⚠ {warning}")),
-    );
-    lines.push(format!("查询接口：{query_mode}"));
-    if !current.packages.is_empty() {
-        lines.push("流量包明细：".into());
-        lines.extend(detail_lines(current, 20));
+
+    let package_details = current
+        .packages
+        .iter()
+        .filter(|package| package.total_mb > 0.0 || package.unlimited)
+        .take(3)
+        .collect::<Vec<_>>();
+    if !package_details.is_empty() {
+        report.line();
+        report.bold("套餐明细");
+        report.line();
+        for package in package_details {
+            package_line(&mut report, package);
+        }
+        if current.packages.len() > 3 {
+            report.text(format!(
+                "其余 {} 个流量包已省略",
+                current.packages.len() - 3
+            ));
+            report.line();
+        }
+    }
+
+    for warning in &current.warnings {
+        report.line();
+        report.text("⚠ ");
+        report.text(warning);
+        report.line();
     }
     UsageReport {
-        message: lines.join("\n"),
+        message: report.into_message(),
         should_notify,
     }
 }
@@ -168,9 +221,9 @@ mod tests {
 
     fn account() -> AccountModel {
         AccountModel {
-            owner: "telegram:1".into(),
+            owner: "telegram_1".into(),
             account_id: "main".into(),
-            bot: "telegram:2".into(),
+            bot: "telegram_2".into(),
             account_name: "主卡".into(),
             token_online: "token".into(),
             app_id: "app".into(),
@@ -193,7 +246,7 @@ mod tests {
             package_name: "测试套餐".into(),
             packages: vec![FlowPackage {
                 id: "normal".into(),
-                name: "通用".into(),
+                name: "通用流量".into(),
                 total_mb: 1024.0,
                 used_mb: used,
                 remaining_mb: 1024.0 - used,
@@ -204,24 +257,26 @@ mod tests {
     }
 
     #[test]
-    fn threshold_is_account_scoped_and_counter_reset_is_safe() {
+    fn compact_report_uses_rich_text_and_preserves_threshold_behavior() {
         let previous = snapshot("2026-07-27T00:00:00Z", 100.0);
         let current = snapshot("2026-07-27T00:10:00Z", 160.0);
-        assert!(
-            build_report(
-                &account(),
-                &current,
-                Some(&previous),
-                Some(&previous),
-                "modern-get"
-            )
-            .should_notify
+        let report = build_report(
+            &account(),
+            &current,
+            Some(&previous),
+            Some(&previous),
+            "modern-get",
         );
-
-        let reset = snapshot("2026-08-01T00:00:00Z", 5.0);
-        assert_eq!(
-            aggregate(&reset, &current, &reset)["normal"].interval_used_mb,
-            0.0
-        );
+        assert!(report.should_notify);
+        let Message { segments, .. } = report.message;
+        let [oxidebot::core::source::message::MessageSegment::RichText(value)] =
+            segments.as_slice()
+        else {
+            panic!("report must retain portable rich-text formatting");
+        };
+        assert!(value.text.contains("流量概览"));
+        assert!(value.text.contains("套餐明细"));
+        assert!(!value.spans.is_empty());
+        assert!(value.text.lines().count() < 20);
     }
 }

@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use oxidebot::{
-    BotId, BotIdentity, PlatformId,
+    BotId, BotIdentity, Message, PlatformId,
     delivery::{Address, BotDirectory, BotSelection, FallbackPolicy},
 };
 
@@ -20,7 +20,7 @@ pub async fn send_message(
     bots: &BotDirectory,
     user: &str,
     stored_bot: &str,
-    message: String,
+    message: impl Into<Message>,
 ) -> Result<()> {
     let (platform, bot_id) = stored_bot
         .split_once('_')
@@ -32,7 +32,7 @@ pub async fn send_message(
     let bot_id = BotId::new(bot_id.to_owned()).context("stored bot ID is invalid")?;
     bots.send_address(
         Address::direct(user_id).through(BotSelection::Exact(BotIdentity::new(platform, bot_id))),
-        message,
+        message.into(),
         FallbackPolicy::Auto,
     )
     .await

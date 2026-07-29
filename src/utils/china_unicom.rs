@@ -11,6 +11,7 @@ use dashmap::DashMap;
 use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use tokio::{sync::Mutex, task::JoinHandle, time::sleep};
 
+use oxidebot::Message;
 use oxidebot::delivery::BotDirectory;
 
 use crate::model::{
@@ -133,7 +134,7 @@ async fn refresh_credentials(
 pub async fn query_once(
     db: &sea_orm::DatabaseConnection,
     account: &mut AccountModel,
-) -> Result<(bool, String)> {
+) -> Result<(bool, Message)> {
     let lock = account_lock(&account.owner, &account.account_id);
     let _guard = lock.lock().await;
     *account = AccountEntity::find_by_id((account.owner.clone(), account.account_id.clone()))
@@ -146,7 +147,7 @@ pub async fn query_once(
 async fn query_once_locked(
     db: &sea_orm::DatabaseConnection,
     account: &mut AccountModel,
-) -> Result<(bool, String)> {
+) -> Result<(bool, Message)> {
     let client = ChinaUnicomClient::new(client_config(account), 20.0, true, true)?;
     let mut proactive_warning = None;
     if refresh_due(account)
