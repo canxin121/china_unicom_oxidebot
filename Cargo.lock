@@ -2110,7 +2110,7 @@ dependencies = [
 [[package]]
 name = "oxidebot"
 version = "1.0.0"
-source = "git+https://github.com/canxin121/oxidebot?rev=5a867139a12b716c54d2464c9fe7d2ca8af7e8ed#5a867139a12b716c54d2464c9fe7d2ca8af7e8ed"
+source = "git+https://github.com/canxin121/oxidebot?rev=4e1ba8bcdd24b8d3965809450847dbee2689f5ff#4e1ba8bcdd24b8d3965809450847dbee2689f5ff"
 dependencies = [
  "oxidebot-core",
  "oxidebot-macros",
@@ -2120,7 +2120,7 @@ dependencies = [
 [[package]]
 name = "oxidebot-adapter-telegram"
 version = "1.0.0"
-source = "git+https://github.com/canxin121/oxidebot?rev=5a867139a12b716c54d2464c9fe7d2ca8af7e8ed#5a867139a12b716c54d2464c9fe7d2ca8af7e8ed"
+source = "git+https://github.com/canxin121/oxidebot?rev=4e1ba8bcdd24b8d3965809450847dbee2689f5ff#4e1ba8bcdd24b8d3965809450847dbee2689f5ff"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2139,7 +2139,7 @@ dependencies = [
 [[package]]
 name = "oxidebot-core"
 version = "1.0.0"
-source = "git+https://github.com/canxin121/oxidebot?rev=5a867139a12b716c54d2464c9fe7d2ca8af7e8ed#5a867139a12b716c54d2464c9fe7d2ca8af7e8ed"
+source = "git+https://github.com/canxin121/oxidebot?rev=4e1ba8bcdd24b8d3965809450847dbee2689f5ff#4e1ba8bcdd24b8d3965809450847dbee2689f5ff"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2155,7 +2155,7 @@ dependencies = [
 [[package]]
 name = "oxidebot-macros"
 version = "1.0.0"
-source = "git+https://github.com/canxin121/oxidebot?rev=5a867139a12b716c54d2464c9fe7d2ca8af7e8ed#5a867139a12b716c54d2464c9fe7d2ca8af7e8ed"
+source = "git+https://github.com/canxin121/oxidebot?rev=4e1ba8bcdd24b8d3965809450847dbee2689f5ff#4e1ba8bcdd24b8d3965809450847dbee2689f5ff"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -2166,7 +2166,7 @@ dependencies = [
 [[package]]
 name = "oxidebot-runtime"
 version = "1.0.0"
-source = "git+https://github.com/canxin121/oxidebot?rev=5a867139a12b716c54d2464c9fe7d2ca8af7e8ed#5a867139a12b716c54d2464c9fe7d2ca8af7e8ed"
+source = "git+https://github.com/canxin121/oxidebot?rev=4e1ba8bcdd24b8d3965809450847dbee2689f5ff#4e1ba8bcdd24b8d3965809450847dbee2689f5ff"
 dependencies = [
  "async-trait",
  "chrono",
