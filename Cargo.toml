@@ -1,8 +1,8 @@
 [package]
 name = "china_unicom_oxidebot"
-version = "1.0.0-alpha.1"
+version = "1.0.0"
 edition = "2024"
-rust-version = "1.97"
+rust-version = "1.97.1"
 description = "China Unicom usage query and notification handler for OxideBot"
 license = "GPL-3.0-only"
 repository = "https://github.com/canxin121/china_unicom_oxidebot"
@@ -14,7 +14,7 @@ async-trait = "0.1.91"
 chrono = { version = "0.4.45", features = ["serde", "clock"] }
 china_unicom = { package = "china-unicom-rs", version = "1.0.0", git = "https://github.com/canxin121/china-unicom-rs", default-features = false }
 dashmap = "6.2.1"
-oxidebot = { git = "https://github.com/canxin121/oxidebot", rev = "482592bd40e612914eb0e16c0e0767a49e3e33a7", version = "1.0.0-alpha.1" }
+oxidebot = { git = "https://github.com/canxin121/oxidebot", rev = "aa327eb39b2def806d1009799be60face73ffb68", version = "1.0.0" }
 sea-orm = { version = "2.0.0", default-features = false, features = [
     "runtime-tokio-rustls",
     "sqlx-sqlite",
@@ -29,4 +29,4 @@ tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "sync", "
 tracing = "0.1.44"
 
 [dev-dependencies]
-oxidebot-adapter-telegram = { git = "https://github.com/canxin121/oxidebot", rev = "482592bd40e612914eb0e16c0e0767a49e3e33a7", version = "1.0.0-alpha.1" }
+oxidebot-adapter-telegram = { git = "https://github.com/canxin121/oxidebot", rev = "aa327eb39b2def806d1009799be60face73ffb68", version = "1.0.0" }

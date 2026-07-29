@@ -157,10 +157,10 @@ TELEGRAM_BOT_TOKEN='你的 Bot Token' TELEGRAM_BOT_ID='Telegram 数字 Bot ID' c
 
 ## 依赖
 
-- Rust 1.97+（由 `china-unicom-rs` 与当前 SeaORM / SQLx 依赖链要求；并非 OxideBot 1.0 的 MSRV 限制）
+- Rust 1.97.1+（由 `china-unicom-rs` 与当前 SeaORM / SQLx 依赖链要求；并非 OxideBot 1.0 的 MSRV 限制）
 - `china-unicom-rs` 1.0.0，直接 Git 依赖并由 `Cargo.lock` 固定提交
-- `oxidebot` 1.0.0-alpha.1（固定到已验证的 OxideBot Git revision）
-- `oxidebot-adapter-telegram` 1.0.0-alpha.1（仅供 Telegram 示例使用）
+- `oxidebot` 1.0.0（固定到已验证的 OxideBot Git revision）
+- `oxidebot-adapter-telegram` 1.0.0（仅供 Telegram 示例使用）
 - Tokio 1.53.1
 - SeaORM / SeaORM Migration 2.0.0
 
