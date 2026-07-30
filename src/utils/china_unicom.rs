@@ -11,14 +11,13 @@ use dashmap::DashMap;
 use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use tokio::{sync::Mutex, task::JoinHandle, time::sleep};
 
-use oxidebot::Message;
 use oxidebot::delivery::BotDirectory;
 
 use crate::model::{
     AccountActiveModel, AccountEntity, AccountModel, AccountStateActiveModel, AccountStateEntity,
     AccountStateModel,
 };
-use crate::report::{build_report, same_china_day};
+use crate::report::{UsageReport, build_report, same_china_day};
 
 use super::oxidebot_util::send_message;
 
@@ -134,7 +133,7 @@ async fn refresh_credentials(
 pub async fn query_once(
     db: &sea_orm::DatabaseConnection,
     account: &mut AccountModel,
-) -> Result<(bool, Message)> {
+) -> Result<UsageReport> {
     let lock = account_lock(&account.owner, &account.account_id);
     let _guard = lock.lock().await;
     *account = AccountEntity::find_by_id((account.owner.clone(), account.account_id.clone()))
@@ -147,7 +146,7 @@ pub async fn query_once(
 async fn query_once_locked(
     db: &sea_orm::DatabaseConnection,
     account: &mut AccountModel,
-) -> Result<(bool, Message)> {
+) -> Result<UsageReport> {
     let client = ChinaUnicomClient::new(client_config(account), 20.0, true, true)?;
     let mut proactive_warning = None;
     if refresh_due(account)
@@ -244,7 +243,7 @@ async fn query_once_locked(
         _ => &current,
     };
     save_state(db, state, account, next_previous, &daily).await?;
-    Ok((report.should_notify, report.message))
+    Ok(report)
 }
 
 pub async fn create_china_unicom_task(
@@ -265,10 +264,11 @@ pub async fn create_china_unicom_task(
         let mut last_error = None::<String>;
         loop {
             match query_once(&db, &mut account).await {
-                Ok((should_send, message)) => {
+                Ok(report) => {
                     last_error = None;
-                    if should_send
-                        && let Err(error) = send_message(&bots, &owner, &account.bot, message).await
+                    if report.should_notify
+                        && let Err(error) =
+                            send_message(&bots, &owner, &account.bot, report.notification).await
                     {
                         tracing::error!(%owner, account = %account.account_id, %error, "发送联通流量通知失败");
                     }

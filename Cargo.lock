@@ -528,7 +528,7 @@ dependencies = [
 [[package]]
 name = "china-unicom-rs"
 version = "1.0.0"
-source = "git+https://github.com/canxin121/china-unicom-rs#bfb4deea129d53d91c2748f828c6d4373da77c0c"
+source = "git+https://github.com/canxin121/china-unicom-rs#2f26268dab115384780bc2f4831898e110aaf91f"
 dependencies = [
  "base64 0.23.0",
  "chrono",
@@ -3556,7 +3556,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

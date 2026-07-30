@@ -12,7 +12,11 @@ use crate::model::AccountModel;
 
 #[derive(Debug, Clone)]
 pub struct UsageReport {
-    pub message: Message,
+    /// Full on-demand reply, including the current balance and package detail.
+    pub reply: Message,
+    /// Compact background notification whose first two lines remain useful in
+    /// Telegram's Android notification preview.
+    pub notification: Message,
     pub should_notify: bool,
 }
 
@@ -84,6 +88,115 @@ fn package_line(report: &mut RichReport, package: &FlowPackage) {
     report.line();
 }
 
+fn elapsed_label(seconds: i64) -> String {
+    let mut remaining = seconds.max(0);
+    let days = remaining / 86_400;
+    remaining %= 86_400;
+    let hours = remaining / 3_600;
+    remaining %= 3_600;
+    let minutes = remaining / 60;
+
+    let mut parts = Vec::new();
+    if days > 0 {
+        parts.push(format!("{days} 天"));
+    }
+    if hours > 0 {
+        parts.push(format!("{hours} 小时"));
+    }
+    if minutes > 0 {
+        parts.push(format!("{minutes} 分钟"));
+    }
+    if parts.is_empty() {
+        "不足 1 分钟".into()
+    } else {
+        parts.join(" ")
+    }
+}
+
+fn interval_label(initial: bool, elapsed_seconds: i64) -> Option<String> {
+    (!initial).then(|| {
+        if elapsed_seconds > 0 {
+            format!("近 {}", elapsed_label(elapsed_seconds))
+        } else {
+            "较上次查询".into()
+        }
+    })
+}
+
+fn delta(value: f64) -> String {
+    format!("+{}", format_data_mb(value))
+}
+
+fn change_line(report: &mut RichReport, label: &str, normal: f64, free: f64) {
+    if !label.is_empty() {
+        report.text(label);
+        report.text("  ");
+    }
+    report.text("通用 ");
+    report.code(delta(normal));
+    report.text("  ·  免流 ");
+    report.code(delta(free));
+    report.line();
+}
+
+fn balance_line(report: &mut RichReport, normal_remaining: f64, free_remaining: f64) {
+    report.text("余量  通用 ");
+    report.code(format_data_mb(normal_remaining));
+    report.text("  ·  免流 ");
+    report.code(format_data_mb(free_remaining));
+    report.line();
+}
+
+fn build_notification(
+    account: &AccountModel,
+    interval: Option<&str>,
+    normal_interval_used_mb: f64,
+    free_interval_used_mb: f64,
+    normal_remaining_mb: f64,
+    free_remaining_mb: f64,
+    new_package_count: usize,
+) -> Message {
+    let period = interval.unwrap_or("刚刚");
+    let has_usage = normal_interval_used_mb > 0.0 || free_interval_used_mb > 0.0;
+    let mut report = RichReport::default();
+
+    if has_usage {
+        report.text("📉 ");
+        report.bold(&account.account_name);
+        report.text("  ·  ");
+        report.text(period);
+        report.line();
+        change_line(
+            &mut report,
+            "",
+            normal_interval_used_mb,
+            free_interval_used_mb,
+        );
+    } else if new_package_count > 0 {
+        report.text("🆕 ");
+        report.bold(&account.account_name);
+        report.text("  ·  ");
+        report.text(period);
+        report.line();
+        report.text(format!("新增 {new_package_count} 个流量包"));
+        report.line();
+    } else {
+        report.text("⏱ ");
+        report.bold(&account.account_name);
+        report.text("  ·  ");
+        report.text(period);
+        report.text(" 无流量变化");
+        report.line();
+    }
+
+    if has_usage && new_package_count > 0 {
+        report.text(format!("新增 {new_package_count} 个流量包"));
+        report.line();
+    }
+    balance_line(&mut report, normal_remaining_mb, free_remaining_mb);
+    report.into_message()
+}
+
 pub fn build_report(
     account: &AccountModel,
     current: &UsageSnapshot,
@@ -111,6 +224,17 @@ pub fn build_report(
     let should_notify = !initial
         && (timeout_reached || free_reached || normal_reached || !summary.new_packages.is_empty());
 
+    let interval = interval_label(initial, summary.elapsed_seconds);
+    let notification = build_notification(
+        account,
+        interval.as_deref(),
+        normal.interval_used_mb,
+        free.interval_used_mb,
+        normal.remaining_mb,
+        free.remaining_mb,
+        summary.new_packages.len(),
+    );
+
     let mut report = RichReport::default();
     report.text("📊 ");
     report.bold(&account.account_name);
@@ -123,24 +247,28 @@ pub fn build_report(
         report.line();
     }
     report.line();
-    report.bold("流量概览");
+    report.bold("余量");
     report.line();
     usage_line(&mut report, "通用", normal.used_mb, normal.remaining_mb);
     usage_line(&mut report, "免流", free.used_mb, free.remaining_mb);
 
     report.line();
-    report.bold("用量变化");
-    report.line();
-    report.text("本次  通用 ");
-    report.code(format_data_mb(normal.interval_used_mb));
-    report.text("  ·  免流 ");
-    report.code(format_data_mb(free.interval_used_mb));
-    report.line();
-    report.text("今日  通用 ");
-    report.code(format_data_mb(normal.today_used_mb));
-    report.text("  ·  免流 ");
-    report.code(format_data_mb(free.today_used_mb));
-    report.line();
+    if let Some(interval) = interval.as_deref() {
+        report.bold("变化");
+        report.line();
+        change_line(
+            &mut report,
+            interval,
+            normal.interval_used_mb,
+            free.interval_used_mb,
+        );
+        change_line(
+            &mut report,
+            "今日累计",
+            normal.today_used_mb,
+            free.today_used_mb,
+        );
+    }
 
     let carryover = normal.carryover_remaining_mb + free.carryover_remaining_mb;
     if carryover > 0.0 || normal_unlimited.used_mb > 0.0 || free_unlimited.used_mb > 0.0 {
@@ -208,7 +336,8 @@ pub fn build_report(
         report.line();
     }
     UsageReport {
-        message: report.into_message(),
+        reply: report.into_message(),
+        notification,
         should_notify,
     }
 }
@@ -257,7 +386,7 @@ mod tests {
     }
 
     #[test]
-    fn compact_report_uses_rich_text_and_preserves_threshold_behavior() {
+    fn replies_show_the_real_interval_and_notifications_lead_with_usage() {
         let previous = snapshot("2026-07-27T00:00:00Z", 100.0);
         let current = snapshot("2026-07-27T00:10:00Z", 160.0);
         let report = build_report(
@@ -268,15 +397,101 @@ mod tests {
             "modern-get",
         );
         assert!(report.should_notify);
-        let Message { segments, .. } = report.message;
+        let Message { segments, .. } = report.reply;
         let [oxidebot::core::source::message::MessageSegment::RichText(value)] =
             segments.as_slice()
         else {
             panic!("report must retain portable rich-text formatting");
         };
-        assert!(value.text.contains("流量概览"));
+        assert!(value.text.contains("余量"));
+        assert!(value.text.contains("近 10 分钟"));
+        assert!(value.text.contains("+60MB"));
+        assert!(!value.text.contains("本次"));
         assert!(value.text.contains("套餐明细"));
         assert!(!value.spans.is_empty());
         assert!(value.text.lines().count() < 20);
+
+        let Message { segments, .. } = report.notification;
+        let [oxidebot::core::source::message::MessageSegment::RichText(value)] =
+            segments.as_slice()
+        else {
+            panic!("notification must retain portable rich-text formatting");
+        };
+        let lines = value.text.lines().collect::<Vec<_>>();
+        assert_eq!(lines[0], "📉 主卡  ·  近 10 分钟");
+        assert_eq!(lines[1], "通用 +60MB  ·  免流 +0MB");
+        assert_eq!(lines[2], "余量  通用 864MB  ·  免流 0MB");
+    }
+
+    #[test]
+    fn initial_query_has_no_zero_second_change_line() {
+        let current = snapshot("2026-07-27T00:00:00Z", 160.0);
+        let report = build_report(&account(), &current, None, Some(&current), "modern-get");
+        let Message { segments, .. } = report.reply;
+        let [oxidebot::core::source::message::MessageSegment::RichText(value)] =
+            segments.as_slice()
+        else {
+            panic!("report must retain portable rich-text formatting");
+        };
+        assert!(!value.text.contains("近 0"));
+        assert!(!value.text.contains("变化"));
+    }
+
+    #[test]
+    fn timeout_notification_explains_that_the_interval_had_no_usage() {
+        let mut account = account();
+        account.timeout = Some(300);
+        let previous = snapshot("2026-07-27T00:00:00Z", 100.0);
+        let current = snapshot("2026-07-27T00:05:00Z", 100.0);
+        let report = build_report(
+            &account,
+            &current,
+            Some(&previous),
+            Some(&previous),
+            "modern-get",
+        );
+        assert!(report.should_notify);
+
+        let Message { segments, .. } = report.notification;
+        let [oxidebot::core::source::message::MessageSegment::RichText(value)] =
+            segments.as_slice()
+        else {
+            panic!("notification must retain portable rich-text formatting");
+        };
+        let lines = value.text.lines().collect::<Vec<_>>();
+        assert_eq!(lines[0], "⏱ 主卡  ·  近 5 分钟 无流量变化");
+        assert_eq!(lines[1], "余量  通用 924MB  ·  免流 0MB");
+    }
+
+    #[test]
+    fn new_package_notification_leads_with_the_package_event() {
+        let previous = snapshot("2026-07-27T00:00:00Z", 100.0);
+        let mut current = snapshot("2026-07-27T00:05:00Z", 100.0);
+        current.packages.push(FlowPackage {
+            id: "bonus".into(),
+            name: "5G 赠送流量".into(),
+            total_mb: 5120.0,
+            remaining_mb: 5120.0,
+            ..Default::default()
+        });
+        let report = build_report(
+            &account(),
+            &current,
+            Some(&previous),
+            Some(&previous),
+            "modern-get",
+        );
+        assert!(report.should_notify);
+
+        let Message { segments, .. } = report.notification;
+        let [oxidebot::core::source::message::MessageSegment::RichText(value)] =
+            segments.as_slice()
+        else {
+            panic!("notification must retain portable rich-text formatting");
+        };
+        let lines = value.text.lines().collect::<Vec<_>>();
+        assert_eq!(lines[0], "🆕 主卡  ·  近 5 分钟");
+        assert_eq!(lines[1], "新增 1 个流量包");
+        assert_eq!(lines[2], "余量  通用 5.9GB  ·  免流 0MB");
     }
 }

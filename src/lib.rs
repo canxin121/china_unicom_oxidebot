@@ -403,7 +403,7 @@ impl ChinaUnicomPlugin {
         }
         for mut account in accounts {
             match query_once(&self.db, &mut account).await {
-                Ok((_, message)) => self.send_message(messenger, message).await?,
+                Ok(report) => self.send_message(messenger, report.reply).await?,
                 Err(error) => {
                     self.send_message(
                         messenger,
