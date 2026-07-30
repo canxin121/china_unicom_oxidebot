@@ -123,19 +123,15 @@ fn interval_label(initial: bool, elapsed_seconds: i64) -> Option<String> {
     })
 }
 
-fn delta(value: f64) -> String {
-    format!("+{}", format_data_mb(value))
-}
-
-fn change_line(report: &mut RichReport, label: &str, normal: f64, free: f64) {
+fn consumption_line(report: &mut RichReport, label: &str, normal: f64, free: f64) {
     if !label.is_empty() {
         report.text(label);
         report.text("  ");
     }
     report.text("通用 ");
-    report.code(delta(normal));
+    report.code(format_data_mb(normal));
     report.text("  ·  免流 ");
-    report.code(delta(free));
+    report.code(format_data_mb(free));
     report.line();
 }
 
@@ -165,8 +161,9 @@ fn build_notification(
         report.bold(&account.account_name);
         report.text("  ·  ");
         report.text(period);
+        report.text("消耗");
         report.line();
-        change_line(
+        consumption_line(
             &mut report,
             "",
             normal_interval_used_mb,
@@ -256,13 +253,14 @@ pub fn build_report(
     if let Some(interval) = interval.as_deref() {
         report.bold("变化");
         report.line();
-        change_line(
+        let interval_consumption = format!("{interval}消耗");
+        consumption_line(
             &mut report,
-            interval,
+            &interval_consumption,
             normal.interval_used_mb,
             free.interval_used_mb,
         );
-        change_line(
+        consumption_line(
             &mut report,
             "今日累计",
             normal.today_used_mb,
@@ -405,7 +403,8 @@ mod tests {
         };
         assert!(value.text.contains("余量"));
         assert!(value.text.contains("近 10 分钟"));
-        assert!(value.text.contains("+60MB"));
+        assert!(value.text.contains("近 10 分钟消耗"));
+        assert!(value.text.contains("通用 60MB"));
         assert!(!value.text.contains("本次"));
         assert!(value.text.contains("套餐明细"));
         assert!(!value.spans.is_empty());
@@ -418,8 +417,8 @@ mod tests {
             panic!("notification must retain portable rich-text formatting");
         };
         let lines = value.text.lines().collect::<Vec<_>>();
-        assert_eq!(lines[0], "📉 主卡  ·  近 10 分钟");
-        assert_eq!(lines[1], "通用 +60MB  ·  免流 +0MB");
+        assert_eq!(lines[0], "📉 主卡  ·  近 10 分钟消耗");
+        assert_eq!(lines[1], "通用 60MB  ·  免流 0MB");
         assert_eq!(lines[2], "余量  通用 864MB  ·  免流 0MB");
     }
 
