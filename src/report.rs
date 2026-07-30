@@ -53,6 +53,16 @@ impl RichReport {
         self.text.push('\n');
     }
 
+    fn append(&mut self, extra: &Self) {
+        let offset = self.text.len();
+        self.text.push_str(&extra.text);
+        self.spans
+            .extend(extra.spans.iter().cloned().map(|span| TextSpan {
+                range: (span.range.start + offset)..(span.range.end + offset),
+                styles: span.styles,
+            }));
+    }
+
     fn into_message(self) -> Message {
         Message::rich_text(RichText {
             text: self.text,
@@ -151,7 +161,7 @@ fn build_notification(
     normal_remaining_mb: f64,
     free_remaining_mb: f64,
     new_package_count: usize,
-) -> Message {
+) -> RichReport {
     let period = interval.unwrap_or("刚刚");
     let has_usage = normal_interval_used_mb > 0.0 || free_interval_used_mb > 0.0;
     let mut report = RichReport::default();
@@ -191,7 +201,7 @@ fn build_notification(
         report.line();
     }
     balance_line(&mut report, normal_remaining_mb, free_remaining_mb);
-    report.into_message()
+    report
 }
 
 pub fn build_report(
@@ -222,7 +232,7 @@ pub fn build_report(
         && (timeout_reached || free_reached || normal_reached || !summary.new_packages.is_empty());
 
     let interval = interval_label(initial, summary.elapsed_seconds);
-    let notification = build_notification(
+    let mut notification = build_notification(
         account,
         interval.as_deref(),
         normal.interval_used_mb,
@@ -333,9 +343,14 @@ pub fn build_report(
         report.text(warning);
         report.line();
     }
+    // A background notification must start with the short summary so Android
+    // can preview the interval consumption, while its Telegram chat message
+    // still carries the complete on-demand report below it.
+    notification.line();
+    notification.append(&report);
     UsageReport {
         reply: report.into_message(),
-        notification,
+        notification: notification.into_message(),
         should_notify,
     }
 }
@@ -420,6 +435,9 @@ mod tests {
         assert_eq!(lines[0], "📉 主卡  ·  近 10 分钟消耗");
         assert_eq!(lines[1], "通用 60MB  ·  免流 0MB");
         assert_eq!(lines[2], "余量  通用 864MB  ·  免流 0MB");
+        assert_eq!(lines[3], "");
+        assert_eq!(lines[4], "📊 主卡  ·  main");
+        assert!(value.text.contains("套餐明细"));
     }
 
     #[test]
